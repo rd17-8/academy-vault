@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<title>UNSEEN · Find talent before the world does</title>
-<meta name="description" content="UNSEEN: the private scouting platform for academy football. Squads, match video and highlight reels in one place.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230b0d10'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23c8f43c' stroke-width='3'/%3E%3Ccircle cx='19' cy='13' r='3.4' fill='%23c8f43c'/%3E%3C/svg%3E">
+<title>GEMBALL · Where football's gems are found</title>
+<meta name="description" content="GEMBALL: the private scouting platform for academy football. Squads, match video and highlight reels in one place.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230b0d10'/%3E%3Cpath d='M9.8 7.4H22.2L27 13.1 16 26.1 5 13.1Z' fill='%23c8f43c' fill-opacity='.25' stroke='%23c8f43c' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M5 13.1H27M12.6 13.1 16 7.4 19.4 13.1 16 26.1 12.6 13.1' fill='none' stroke='%23c8f43c' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
 <style>
-/* UNSEEN: sports-tech scouting desk. Ink-black chrome, clean white work surfaces, electric-lime signal colour */
+/* GEMBALL: sports-tech scouting desk. Ink-black chrome, clean white work surfaces, electric-lime signal colour */
 :root{
   --bg:#f4f5f1; --surface:#ffffff; --sunk:#eceee8; --ink:#0b0d10; --muted:#5d636b; --line:#e1e4dc;
   --bar:#0b0d10; --bar-ink:#f4f5f1; --bar-muted:#8d949c;
@@ -248,7 +248,7 @@ table.imp tr.off td{opacity:.45}
 </head>
 <body>
 <header class="topbar"><div class="wrap">
-  <a class="logo" href="#/" aria-label="UNSEEN home"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12" fill="none" stroke="#c8f43c" stroke-width="3"/><circle cx="19.5" cy="12.5" r="4.4" fill="#c8f43c"/></svg><span><b>UNSEEN</b><small>Find talent before the world does</small></span></a>
+  <a class="logo" href="#/" aria-label="GEMBALL home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8.2 5.2H23.8L29.8 12.4 16 28.6 2.2 12.4Z" fill="#c8f43c" fill-opacity=".22" stroke="#c8f43c" stroke-width="2.6" stroke-linejoin="round"/><path d="M2.2 12.4H29.8M11.8 12.4 16 5.2 20.2 12.4 16 28.6 11.8 12.4" fill="none" stroke="#c8f43c" stroke-width="1.6" stroke-linejoin="round"/></svg><span><b>GEMBALL</b><small>Where football's gems are found</small></span></a>
   <div class="search"><input id="q" type="search" placeholder="Search players or teams" autocomplete="off" aria-label="Search"><div class="results" id="q-results" hidden></div></div>
   <nav class="navlinks">
     <a href="#/" id="nav-home">Countries</a>
@@ -265,7 +265,7 @@ table.imp tr.off td{opacity:.45}
 (function(){
 "use strict";
 const KEY="academy-vault-v3"; /* storage key stays the same across renames so saved data is kept */
-const BRAND="UNSEEN";
+const BRAND="GEMBALL";
 const S={teams:[],players:[],matches:[],clips:[],settings:{brand:"",contact:""}};
 const videoMap={};
 
