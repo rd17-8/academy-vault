@@ -684,8 +684,8 @@ function findTeam(name){
   return bs>=.6?best:null;
 }
 /* drag a box (or just click) on the video thumbnail around a team's crest */
-function openCrestCrop(img,onPick){
-  const box=$("#mf-crop");box.hidden=false;
+function openCrestCrop(img,onPick,box=$("#mf-crop")){
+  box.hidden=false;
   box.innerHTML=`<div class="panel sub"><div class="spread"><b>Drag a square around the crest (or just click it)</b><button class="btn sm ghost" type="button" id="cr-close">Close</button></div>
     <canvas id="cr-cv" style="width:100%;max-width:640px;touch-action:none;cursor:crosshair;border-radius:8px"></canvas></div>`;
   const cv=$("#cr-cv"),ctx=cv.getContext("2d");cv.width=img.naturalWidth;cv.height=img.naturalHeight;
@@ -704,6 +704,64 @@ function openCrestCrop(img,onPick){
     onPick(out.toDataURL("image/png"));box.hidden=true;box.innerHTML=""};
   $("#cr-close").onclick=()=>{box.hidden=true;box.innerHTML=""};
   draw();box.scrollIntoView({block:"nearest"});
+}
+/* crests on Wikipedia: the club's article (and near matches) carry the logo file; flags, kit parts and wiki icons are skipped,
+   and a file must share a word with the club's name or be called a logo/crest */
+async function wikiCrests(name){
+  const W="https://en.wikipedia.org/w/api.php?format=json&origin=*&",get=async q=>(await fetch(W+q)).json();
+  const s=await get("action=query&list=search&srlimit=4&srsearch="+encodeURIComponent(name+" football"));
+  const titles=s.query.search.map(r=>r.title);if(!titles.length)return [];
+  const im=await get("action=query&prop=images&imlimit=60&redirects=1&titles="+encodeURIComponent(titles.join("|")));
+  const toks=teamTokens(name).filter(w=>w.length>2),files=new Map();
+  Object.values(im.query.pages).forEach(p=>(p.images||[]).forEach(i=>{
+    const f=deacc(i.title.replace(/^File:/,"").replace(/\.\w+$/,""));
+    if(/flag of|^kit |pictogram|icon|soccerball|wiki|commons|wiktionary|pencil|arrow|clef|gnome|robot|ambox|question book|portal|stadium|map|location/.test(f))return;
+    const logo=/logo|crest|badge|emblem|ecusson|blason/.test(f);
+    if(!/\.(png|svg|gif|webp|jpe?g)$/i.test(i.title)||/\.jpe?g$/i.test(i.title)&&!logo)return;/* sound files; photos of players and grounds */
+    const sc=toks.filter(w=>f.includes(w)).length*2+(logo?1:0);
+    if(sc>0&&!files.has(i.title))files.set(i.title,sc)}));
+  if(!files.size)return [];
+  const best=[...files].sort((a,b)=>b[1]-a[1]).slice(0,12).map(x=>x[0]);
+  const ii=await get("action=query&prop=imageinfo&iiprop=url&iiurlwidth=240&titles="+encodeURIComponent(best.join("|")));
+  return Object.values(ii.query.pages).filter(p=>p.imageinfo?.[0]?.thumburl).sort((a,b)=>files.get(b.title)-files.get(a.title)).map(p=>({title:p.title.replace(/^File:/,""),src:p.imageinfo[0].thumburl}));
+}
+/* set or replace a team's crest after the fact: crop it from any of the team's match videos, find it on the web, paste or upload it */
+function openCrestPicker(t){
+  const ms=S.matches.filter(m=>m.ytId&&(m.homeId===t.id||m.awayId===t.id));
+  openModal(`<div class="spread"><h2>Crest · ${esc(t.name)}</h2><button class="btn ghost" data-close>Close</button></div>
+    <div class="row" style="gap:12px"><span id="cp-now">${crest(t,"lg")}</span><span class="muted">${t.crestData?"Pick a new crest below to replace this one.":"No crest yet. Pick one below."}</span></div>
+    <h3>From a match video</h3>
+    ${ms.length?`<p class="muted" style="margin:0">Click a video, then drag a square around ${esc(t.name)}'s crest.</p><div class="row" id="cp-vids" style="gap:10px;flex-wrap:wrap">${ms.map(m=>`<button class="btn ghost" type="button" data-m="${esc(m.id)}" style="flex-direction:column;padding:6px;gap:4px;max-width:180px"><img alt="" src="https://i.ytimg.com/vi/${esc(m.ytId)}/mqdefault.jpg" style="width:160px;border-radius:6px"><span style="font-size:.8rem">${esc(matchLabel(m))}</span></button>`).join("")}</div>`
+      :`<p class="muted" style="margin:0">No YouTube matches for this team yet.</p>`}
+    <div id="cp-crop" hidden></div>
+    <h3>Find it on the web</h3>
+    <form class="row" id="cp-form"><input id="cp-q" value="${esc(t.name)}" dir="auto" style="flex:1;min-width:180px"><button class="btn primary">Search</button></form>
+    <div id="cp-res"></div>
+    <div class="panel sub" id="cp-paste" tabindex="0" style="flex:none;overflow:visible;max-height:none"><p style="margin:0"><b>Not found?</b> <a href="#" id="cp-google" target="_blank" rel="noopener">Search Google Images</a> or the academy's Facebook page, right-click the crest → <b>Copy image</b>, then come back and press <b>Ctrl+V</b> here.</p>
+      <div class="row"><label class="btn sm ghost">or upload an image file<input type="file" accept="image/*" id="cp-file" hidden></label></div></div>`);
+  $(".modal .panel").classList.add("wide");
+  const setCrest=d=>{upd("teams",t.id,{crestData:d});$("#cp-now").innerHTML=crest({crestData:d},"lg");toast("Crest saved")};
+  const fromBlob=async b=>{try{setCrest(await resizeImage(b))}catch(e){toast("Couldn't read that image")}};
+  $$("#cp-vids [data-m]").forEach(b=>b.onclick=async()=>{const m=byId("matches",b.dataset.m),img=await loadThumb(m.ytId);
+    if(!img){toast("Couldn't load that video's picture");return}openCrestCrop(img,setCrest,$("#cp-crop"))});
+  const google=()=>$("#cp-google").href="https://www.google.com/search?tbm=isch&q="+encodeURIComponent(`${$("#cp-q").value} ${CN[t.country]||""} football logo`.replace(/\s+/g," ").trim());
+  google();$("#cp-q").oninput=google;
+  const search=async()=>{const q=$("#cp-q").value.trim(),box=$("#cp-res");if(!q)return;
+    box.innerHTML=`<p class="muted">Searching…</p>`;
+    let res=[];try{res=await wikiCrests(q)}catch(e){}
+    if($("#cp-q")?.value.trim()!==q)return;
+    box.innerHTML=res.length?`<p class="muted" style="margin:0">Click the right crest to use it.</p><div class="row" style="gap:10px;flex-wrap:wrap">${res.map((r,i)=>`<button class="btn ghost" type="button" data-r="${i}" title="${esc(r.title)}" style="width:110px;height:110px;padding:8px;background:#fff"><img alt="${esc(r.title)}" src="${esc(r.src)}" style="max-width:100%;max-height:100%;object-fit:contain"></button>`).join("")}</div>`
+      :`<p class="muted">No crest found on Wikipedia for "${esc(q)}". Smaller academies usually aren't there; use Google Images below.</p>`;
+    $$("[data-r]",box).forEach(b=>b.onclick=async()=>{try{fromBlob(await (await fetch(res[+b.dataset.r].src)).blob())}catch(e){toast("Couldn't download that image")}})};
+  $("#cp-form").onsubmit=e=>{e.preventDefault();search()};
+  $("#cp-file").onchange=e=>{const f=e.target.files[0];if(f)fromBlob(f)};
+  /* a copied image (or an image link) pasted anywhere in the dialog */
+  $("#modal-root .modal").addEventListener("paste",async e=>{if(e.target.id==="cp-q")return;
+    const it=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith("image/"));
+    if(it){e.preventDefault();fromBlob(it.getAsFile());return}
+    const u=(e.clipboardData?.getData("text")||"").trim();
+    if(/^https?:\/\/\S+$/.test(u)){e.preventDefault();try{fromBlob(await (await fetch(u)).blob())}catch(err){toast("That site doesn't allow downloading the link. Right-click the image → Copy image, then Ctrl+V")}}});
+  if(!t.crestData)search();
 }
 function wireMatchForm(onCancel){
   const form=$("#match-form"),crests={home:null,away:null};let thumb=null,scanned="";
@@ -852,7 +910,8 @@ const Team={
     $("#t-head").innerHTML=`<div class="hero">${crest(t,"lg")}<div class="meta"><div class="eyebrow">${flag(t.country,"sm")} ${esc(CN[t.country]||"")}${t.city?" · "+esc(t.city):""}</div><h1>${esc(t.name)}</h1>
       <div class="row muted">${kit(t,"")}${t.ageGroup?"<span>"+esc(t.ageGroup)+"</span>":""}${t.example?'<span class="ex">Example</span>':""}${awaitTag(t)}</div></div>
       <div class="stats"><div class="stat"><span class="v num">${ps.length}</span><span class="l">Players</span></div><div class="stat"><span class="v num">${ms.length}</span><span class="l">Matches</span></div><div class="stat"><span class="v num">${S.clips.filter(c=>c.teamId===t.id).length}</span><span class="l">Clips</span></div></div>
-      <button class="btn primary" id="t-newmatch">+ New match</button></div>`;
+      <div class="row"><button class="btn" id="t-crest">${t.crestData?"Change crest":"Add crest"}</button><button class="btn primary" id="t-newmatch">+ New match</button></div></div>`;
+    $("#t-crest").onclick=()=>openCrestPicker(t);
     $("#t-newmatch").onclick=()=>{$("#t-slot").innerHTML=matchForm(t.id);wireMatchForm(()=>$("#t-slot").innerHTML="");$("#t-slot").scrollIntoView({block:"nearest"})};
     const tabs=[["squad","Squad"],["matches","Matches"],["edit","Edit team"]];
     $("#t-tabs").innerHTML=tabs.map(([k,l])=>`<button role="tab" data-k="${k}" aria-selected="${teamTab===k}">${l}</button>`).join("");
@@ -887,9 +946,11 @@ const Team={
         <label class="f">Age group<input id="te-age" value="${esc(t.ageGroup||"")}"></label>
         <label class="f">Shirt colour<input type="color" id="te-primary" value="${esc(t.primary||"#555555")}"></label>
         <label class="f">Secondary colour<input type="color" id="te-secondary" value="${esc(t.secondary||"#bbbbbb")}"></label>
-        <label class="f">Replace crest<input type="file" id="te-crest" accept="image/*"></label></div>
+        <label class="f">Replace crest<input type="file" id="te-crest" accept="image/*"></label>
+        <div class="f">Crest from a match video or the web<button class="btn" type="button" id="te-find">Find crest…</button></div></div>
         <div class="row"><button class="btn primary" id="te-save">Save changes</button><button class="btn ghost danger" id="te-del">Delete team (including squad, matches and clips)</button></div>`;
       $("#te-save").onclick=()=>{upd("teams",t.id,{name:$("#te-name").value.trim()||t.name,country:$("#te-country").value,city:$("#te-city").value.trim(),ageGroup:$("#te-age").value.trim(),primary:$("#te-primary").value,secondary:$("#te-secondary").value});toast("Saved")};
+      $("#te-find").onclick=()=>openCrestPicker(t);
       $("#te-crest").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{upd("teams",t.id,{crestData:await resizeImage(f)});toast("Crest updated")}catch(err){toast("Couldn't read that image")}};
       const d=$("#te-del");d.onclick=()=>armDelete(d,()=>{const c=t.country;del("teams",t.id);nav(c?"country":"",c)});
     }
@@ -960,7 +1021,9 @@ const Match={
     crumbs([[`${flag(h?.country,"sm")} ${esc(CN[h?.country]||"")}`,h?.country?"#/country/"+h.country:null],[esc(h?.name||"?"),h?"#/team/"+h.id:null],[esc(matchLabel(m)),null]]);
     $("#m-head").innerHTML=`<div class="panel"><div class="vs"><a class="side" href="#/team/${esc(h?.id)}" style="color:inherit;text-decoration:none">${crest(h,"lg")}<b>${esc(h?.name)}</b><span class="muted">${flag(h?.country,"sm")} ${esc(CN[h?.country]||"")}</span></a>
       <div style="text-align:center;display:flex;flex-direction:column;gap:2px;align-items:center">${scoreHtml(m)}<span class="muted num">${esc(m.date||"")}</span><span class="muted">${esc(m.competition||"")}</span>${m.example?'<span class="ex">Example</span>':""}</div>
-      <a class="side" href="#/team/${esc(a?.id)}" style="color:inherit;text-decoration:none">${crest(a,"lg")}<b>${esc(a?.name)}</b><span class="muted">${flag(a?.country,"sm")} ${esc(CN[a?.country]||"")}</span></a></div></div>`;
+      <a class="side" href="#/team/${esc(a?.id)}" style="color:inherit;text-decoration:none">${crest(a,"lg")}<b>${esc(a?.name)}</b><span class="muted">${flag(a?.country,"sm")} ${esc(CN[a?.country]||"")}</span></a></div>
+      ${[h,a].some(t=>t&&!t.crestData)?`<div class="row" style="justify-content:center;margin-top:8px">${[h,a].map(t=>t&&!t.crestData?`<button class="btn sm" data-crestfor="${esc(t.id)}">Add ${esc(t.name)} crest</button>`:"").join("")}</div>`:""}</div>`;
+    $$("[data-crestfor]").forEach(b=>b.onclick=()=>openCrestPicker(byId("teams",b.dataset.crestfor)));
     this.buildVideo(m);
     this.renderTimeline(m);
     this.renderTagPanel(m,h,a);
