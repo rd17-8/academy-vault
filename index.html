@@ -334,6 +334,9 @@ function crest(team,size=""){
 const crestSrc=team=>team?.crestData||("data:image/svg+xml;charset=utf-8,"+encodeURIComponent(crestSvg(team)));
 function toast(msg){const t=$("#toast");$("#toast-text").textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,2600)}
 const playersOf=teamId=>S.players.filter(p=>p.teamId===teamId).sort((a,b)=>(+a.number||99)-(+b.number||99));
+/* many academies hand out shirts per game: a match can carry its own numbers (match.nums[playerId]) over the squad number */
+const shirtNo=(pl,m)=>{const v=m?.nums?.[pl?.id];return v!=null&&v!==""?v:pl?.number};
+const playersIn=(teamId,m)=>playersOf(teamId).sort((a,b)=>(+shirtNo(a,m)||99)-(+shirtNo(b,m)||99));
 const matchesOf=teamId=>S.matches.filter(m=>m.homeId===teamId||m.awayId===teamId).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
 const teamsIn=code=>S.teams.filter(t=>t.country===code).sort((a,b)=>a.name.localeCompare(b.name,"en"));
 function matchLabel(m){if(!m)return"Deleted match";const h=byId("teams",m.homeId),a=byId("teams",m.awayId);return `${h?.name||"?"} vs ${a?.name||"?"}${m.date?" · "+m.date:""}`}
@@ -975,7 +978,9 @@ const Match={
       <div class="panel" id="tagpanel"></div>
     </div>
     <div class="panel"><div class="spread"><h3>Tagged clips</h3><span class="muted" id="clip-count"></span></div><div class="list" id="clip-list"></div></div>
-    <div class="panel"><div class="spread"><h3>Squads</h3><button class="btn ghost danger sm" id="del-match">Delete match</button></div><div class="roster" id="squads"></div></div>`;
+    <div class="panel"><div class="spread"><h3>Squads and shirt numbers</h3><button class="btn ghost danger sm" id="del-match">Delete match</button></div>
+      <p class="muted" style="margin:0">If the shirt numbers change from game to game, type each player's number for this match, or scan the team sheet. Numbers here apply to this match only.</p>
+      <div class="roster" id="squads"></div></div>`;
     $("#del-match").onclick=e=>armDelete(e.currentTarget,()=>{const m=this.match();const h=m?.homeId;del("matches",route.id);nav(h?"team":"",h)});
     this.src=null;
     $("#tl").onclick=e=>{if(!this.v||!this.v.duration)return;const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;this.v.currentTime=x*this.v.duration};
@@ -1028,7 +1033,18 @@ const Match={
     this.renderTimeline(m);
     this.renderTagPanel(m,h,a);
     this.renderClips(m);
-    $("#squads").innerHTML=[h,a].map(t=>`<div class="col"><div class="row">${crest(t,"sm")}<b>${esc(t?.name)}</b></div>${playersOf(t?.id).map(p=>`<a class="row" href="#/player/${esc(p.id)}" style="color:inherit;text-decoration:none">${kit(t,p.number)}<span>${esc(p.name)}</span><span class="muted">${esc(POSL[p.position]||"")}</span></a>`).join("")||`<p class="muted">No players in squad. <a href="#/team/${esc(t?.id)}">Add squad</a></p>`}</div>`).join("");
+    this.renderSquads(m,h,a);
+  },
+  renderSquads(m,h,a){
+    $("#squads").innerHTML=[h,a].map(t=>`<div class="col"><div class="spread">${t?`<span class="row">${crest(t,"sm")}<b>${esc(t.name)}</b></span><button class="btn sm" data-sheet="${esc(t.id)}">Scan team sheet</button>`:""}</div>
+      ${playersIn(t?.id,m).map(p=>`<div class="row" style="flex-wrap:nowrap">${kit(t,shirtNo(p,m))}<a href="#/player/${esc(p.id)}" style="color:inherit;text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)} <span class="muted">${esc(POSL[p.position]||"")}</span></a>
+        <input type="number" min="0" max="99" data-mn="${esc(p.id)}" value="${esc(m.nums?.[p.id]??"")}" placeholder="${esc(p.number??"")||"No."}" title="Shirt number in this match" aria-label="${esc(p.name)}'s shirt number in this match" style="width:64px;flex:none"></div>`).join("")
+      ||`<p class="muted">No players in squad. <a href="#/team/${esc(t?.id)}">Add squad</a> or scan the team sheet.</p>`}</div>`).join("");
+    /* saved without a full redraw so tabbing through the boxes keeps going */
+    $$("[data-mn]").forEach(i=>i.onchange=()=>{const nums={...(m.nums||{})};if(i.value==="")delete nums[i.dataset.mn];else nums[i.dataset.mn]=+i.value;m.nums=nums;save();
+      const k=i.parentElement.querySelector(".kit");if(k)k.textContent=shirtNo(byId("players",i.dataset.mn),m)??"–";
+      this.renderClips(m);if(tagState&&!tagState.recording)this.renderTagPanel(m,h,a)});
+    $$("[data-sheet]").forEach(b=>b.onclick=()=>openImport(byId("teams",b.dataset.sheet),m));
   },
   buildVideo(m){
     if(!this.src||(this.src==="file"&&!videoMap[m.id])||(this.src==="yt"&&!m.ytId))this.src=videoMap[m.id]?"file":m.ytId?"yt":"file";
@@ -1130,7 +1146,7 @@ const Match={
       $("#tg-cancel").onclick=()=>this.cancelTag();
       return;
     }
-    const col=t=>`<div class="col"><div class="row">${crest(t,"sm")}<b>${esc(t?.name)}</b></div>${playersOf(t?.id).map(pl=>`<button class="pbtn" data-p="${esc(pl.id)}" aria-pressed="${ts.playerId===pl.id}">${kit(t,pl.number)}<span class="n">${esc(pl.name)}</span></button>`).join("")||`<a class="muted" href="#/team/${esc(t?.id)}">Add squad</a>`}</div>`;
+    const col=t=>`<div class="col"><div class="row">${crest(t,"sm")}<b>${esc(t?.name)}</b></div>${playersIn(t?.id,m).map(pl=>`<button class="pbtn" data-p="${esc(pl.id)}" aria-pressed="${ts.playerId===pl.id}">${kit(t,shirtNo(pl,m))}<span class="n">${esc(pl.name)}</span></button>`).join("")||`<a class="muted" href="#/team/${esc(t?.id)}">Add squad</a>`}</div>`;
     const len=ts.end!=null?ts.end-ts.start:null;
     p.innerHTML=`<div class="spread"><h3>${ts.id?"Edit clip":"New clip"}</h3><button class="btn ghost" id="tg-cancel">Cancel <span class="kbd">Esc</span></button></div>
       <div class="io">
@@ -1177,7 +1193,7 @@ const Match={
     const el=$("#clip-list");
     if(!cs.length){el.innerHTML=`<p class="muted">No clips tagged in this match yet.</p>`;return}
     el.innerHTML=cs.map(c=>{const pl=byId("players",c.playerId),t=byId("teams",c.teamId);
-      return `<div class="item">${kit(t,pl?.number)}<div class="grow"><a href="#/player/${esc(pl?.id)}" style="color:inherit;text-decoration:none"><b>${esc(pl?.name||"Deleted player")}</b></a> ${stars(c.rating)} <span class="muted">${esc(c.action||"")}${c.note?" · "+esc(c.note):""}</span><div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩ · ${(c.end-c.start).toFixed(1)}s</div></div>
+      return `<div class="item">${kit(t,shirtNo(pl,m))}<div class="grow"><a href="#/player/${esc(pl?.id)}" style="color:inherit;text-decoration:none"><b>${esc(pl?.name||"Deleted player")}</b></a> ${stars(c.rating)} <span class="muted">${esc(c.action||"")}${c.note?" · "+esc(c.note):""}</span><div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩ · ${(c.end-c.start).toFixed(1)}s</div></div>
       <button class="btn sm" data-play="${esc(c.id)}">▶</button><button class="btn sm" data-edit="${esc(c.id)}">Edit</button><button class="btn ghost danger sm" data-del="${esc(c.id)}">Delete</button></div>`}).join("");
     $$("[data-play]",el).forEach(b=>b.onclick=()=>{const c=byId("clips",b.dataset.play);if(!this.v){toast("Attach the video file first");return}this.preview(c.start,c.end);$("#vbox").scrollIntoView({block:"nearest",behavior:"smooth"})});
     $$("[data-edit]",el).forEach(b=>b.onclick=()=>{const c=byId("clips",b.dataset.edit);tagState={id:c.id,start:c.start,end:c.end,playerId:c.playerId,action:c.action||null,note:c.note||"",rating:c.rating||0};
@@ -1251,7 +1267,7 @@ function startReel(pl,list){
   const stage=$("#reel-stage");
   reel={pid:pl.id,list,i:0,timer:null,yt:null,active:null,busy:false};
   stage.innerHTML=`<div class="video-box"><video id="reel-vid" playsinline controls hidden></video><div class="ytslot" id="reel-ytw" hidden><div id="reel-yt"></div></div>
-    <div class="overlay"><span class="act" id="ov-act"></span>${crest(t,"sm")}${kit(t,pl.number)}<div class="who"><b>${esc(pl.name)}</b><span>${esc(t?.name||"")}</span></div><span class="count" id="ov-count"></span></div></div>
+    <div class="overlay"><span class="act" id="ov-act"></span>${crest(t,"sm")}<span id="ov-kit">${kit(t,pl.number)}</span><div class="who"><b>${esc(pl.name)}</b><span>${esc(t?.name||"")}</span></div><span class="count" id="ov-count"></span></div></div>
     <div class="row" style="margin-block:8px"><button class="btn sm" id="r-prev">Previous</button><button class="btn sm" id="r-next">Next</button><button class="btn sm" id="r-stop">Close</button><span class="muted" id="r-match"></span></div>`;
   $("#r-next").onclick=()=>reelStep(1);$("#r-prev").onclick=()=>reelStep(-1);
   $("#r-stop").onclick=()=>{stopReel();Player.update()};
@@ -1262,6 +1278,7 @@ function startReel(pl,list){
 function reelStep(d){if(!reel)return;const j=reel.i+d;if(j<0)return;if(j>=reel.list.length){reel.active&&reel.active.pause();reel.active=null;toast("End of reel");return}reel.i=j;playCur()}
 async function playCur(){
   const r=reel;if(!r)return;const c=r.list[r.i],m=byId("matches",c.matchId);
+  const pl=byId("players",c.playerId);$("#ov-kit").innerHTML=kit(byId("teams",pl?.teamId),shirtNo(pl,m));
   $("#ov-act").textContent=c.action||"Clip";$("#ov-count").textContent=`${r.i+1}/${r.list.length}`;$("#r-match").textContent=matchLabel(m);
   const v=$("#reel-vid");
   if(videoMap[m.id]){
@@ -1324,7 +1341,7 @@ function drawFrame(ctx,W,H,v,o,c,i){
   const g=ctx.createLinearGradient(0,H-160,0,H);g.addColorStop(0,"rgba(0,0,0,0)");g.addColorStop(1,"rgba(0,0,0,.85)");ctx.fillStyle=g;ctx.fillRect(0,H-160,W,160);
   let x=W-40;
   if(o.crest){ctx.drawImage(o.crest,x-64,H-100,64,64);x-=64+16}
-  drawKit(ctx,o.team,o.pl.number,x-60,H-98,60);x-=60+18;
+  drawKit(ctx,o.team,shirtNo(o.pl,byId("matches",c.matchId)),x-60,H-98,60);x-=60+18;
   ctx.direction="ltr";ctx.textAlign="right";ctx.textBaseline="alphabetic";ctx.fillStyle="#fff";
   fitText(ctx,o.pl.name,x-300,40,800);ctx.fillText(o.pl.name,x,H-62);
   ctx.font="600 24px Inter, Arial, sans-serif";ctx.fillStyle="#d3dbe6";ctx.fillText([o.team?.name,POSL[o.pl.position]].filter(Boolean).join(" · "),x,H-30);
@@ -1607,9 +1624,11 @@ function prepImage(file){
     img.onerror=()=>{URL.revokeObjectURL(url);rej()};img.src=url});
 }
 let imp=null;
-function openImport(team){
-  imp={team,rows:[],images:[]};
-  openModal(`<div class="spread"><h2>Import squad · ${esc(team.name)}</h2><button class="btn ghost" data-close>Close</button></div>
+/* with a match, the sheet is that game's team sheet: its numbers are saved for the match only, players are found by name */
+function openImport(team,match=null){
+  imp={team,rows:[],images:[],match};
+  openModal(`<div class="spread"><h2>${match?"Team sheet":"Import squad"} · ${esc(team.name)}</h2><button class="btn ghost" data-close>Close</button></div>
+    ${match?`<p class="muted" style="margin:0">${esc(matchLabel(match))}. The shirt numbers are saved for this match only; the squad numbers don't change. Players not yet in the squad are added.</p>`:""}
     <div class="tabs" role="tablist" id="imp-tabs"><button role="tab" data-k="img" aria-selected="true">From image or PDF</button><button role="tab" data-k="txt" aria-selected="false">From text</button></div>
     <div id="imp-img">
       <label class="drop" id="imp-drop" for="imp-file"><b>Choose an image or PDF of the player list</b><span class="muted">A WhatsApp screenshot, a squad graphic, a team sheet or a PDF the academy sent. You can pick several files at once.</span><span class="btn primary">Choose files</span></label>
@@ -1729,10 +1748,13 @@ async function runOCR(files){
   finally{if(worker)worker.terminate()}
 }
 const saveCount=()=>imp.rows.filter(r=>r.include&&r.name.trim()).length;
+const saveLabel=()=>imp.match?`Save ${saveCount()} players for this match`:`Add ${saveCount()} players to squad`;
 function renderReview(){
-  const t=imp.team,existing=playersOf(t.id);
-  /* the same shirt number, or (player sheets often have no number) the same name, is an existing player to update */
-  const byNum=r=>(r.number!=null&&r.number!==""?existing.find(p=>+p.number===+r.number):null)
+  const t=imp.team,existing=playersOf(t.id),mt=imp.match;
+  const byName=r=>r.name.trim()?existing.find(p=>nameKey(p.name)===nameKey(r.name))||existing.find(p=>nameSim(p.name,r.name)>=.75):null;
+  /* the same shirt number, or (player sheets often have no number) the same name, is an existing player to update;
+     on a match's team sheet numbers change from game to game, so only the name counts */
+  const byNum=r=>mt?byName(r):(r.number!=null&&r.number!==""?existing.find(p=>+p.number===+r.number):null)
     ||(r.name.trim()?existing.find(p=>nameKey(p.name)===nameKey(r.name)&&!(r.number!=null&&r.number!==""&&p.number!==""&&p.number!=null&&+p.number!==+r.number)):null);
   const box=$("#imp-review");
   const posOpts=v=>`<option value="">—</option>`+POS.map(([k])=>posOption(k,v)).join("");
@@ -1748,16 +1770,22 @@ function renderReview(){
         <td><select data-i="${i}" data-k="position">${posOpts(r.position)}</select></td>
         <td><input class="y" type="number" min="1990" max="2022" data-i="${i}" data-k="birthYear" value="${r.birthYear??""}"></td>
         <td><select data-i="${i}" data-k="foot">${["","Right","Left","Both"].map(v=>`<option value="${v}" ${(r.foot||"")===v?"selected":""}>${v||"—"}</option>`).join("")}</select></td>
-        <td>${ex?`<span class="tag upd" title="${esc(ex.name)}">Updates ${ex.number!==""&&ex.number!=null?"#"+esc(ex.number):esc(ex.name)}</span>`:`<span class="tag new">New</span>`}</td></tr>`}).join("")}
+        <td>${ex?`<span class="tag upd" title="${esc(ex.name)}">${mt?"In squad: "+esc(ex.name):"Updates "+(ex.number!==""&&ex.number!=null?"#"+esc(ex.number):esc(ex.name))}</span>`:`<span class="tag new">New</span>`}</td></tr>`}).join("")}
       </tbody></table></div>
-      <div class="row" style="margin-top:10px"><button class="btn primary big" id="imp-save">Add ${saveCount()} players to squad</button><span class="muted">A player whose number is already in the squad is updated, not duplicated.</span></div>
+      <div class="row" style="margin-top:10px"><button class="btn primary big" id="imp-save">${saveLabel()}</button><span class="muted">${mt?"Numbers apply to this match only. Fix a name to match the squad if it shows New by mistake.":"A player whose number is already in the squad is updated, not duplicated."}</span></div>
     </div></div>`;
   $$("[data-k]",box).forEach(el=>el.onchange=()=>{const r=imp.rows[+el.dataset.i],k=el.dataset.k;
     if(k==="include")r.include=el.checked;else if(k==="number"||k==="birthYear")r[k]=el.value===""?null:+el.value;else r[k]=el.value;
-    if(k==="include"||k==="number"||k==="name")renderReview();else{const s=$("#imp-save");s.textContent=`Add ${saveCount()} players to squad`}});
+    if(k==="include"||k==="number"||k==="name")renderReview();else{const s=$("#imp-save");s.textContent=saveLabel()}});
   $("#imp-add").onclick=()=>{imp.rows.push({include:true,number:null,name:"",position:"",birthYear:null,foot:""});renderReview();const ins=$$(".imp .nm");ins[ins.length-1].focus()};
   $("#imp-save").onclick=()=>{
     let added=0,updated=0;
+    if(mt){const nums={...(mt.nums||{})};
+      imp.rows.filter(r=>r.include&&r.name.trim()).forEach(r=>{let pl=byNum(r);
+        if(pl){Object.assign(pl,{position:pl.position||r.position||"",birthYear:pl.birthYear||r.birthYear||null,foot:pl.foot||r.foot||""});updated++}
+        else{pl={id:uid(),createdAt:Date.now(),teamId:t.id,name:r.name.trim(),number:"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};S.players.push(pl);existing.push(pl);added++}
+        if(r.number!=null&&r.number!=="")nums[pl.id]=+r.number});
+      mt.nums=nums;save();imp=null;closeModal();refresh();toast(`Numbers saved for this match${added?`, ${added} new player${added>1?"s":""} added to the squad`:""}`);return}
     imp.rows.filter(r=>r.include&&r.name.trim()).forEach(r=>{
       const ex=byNum(r);
       const data={name:r.name.trim(),number:r.number??"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};
