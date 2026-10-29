@@ -1459,6 +1459,39 @@ function parseSquad(text){
   });
   return rows;
 }
+/* one player per page: academy "fiche joueur" / player profile sheets with labelled fields ("Nom et prénom :", "Date of birth:"…),
+   in French or English. Only what the squad keeps is read; place of birth, height, qualities and contact details are skipped */
+const PROFILE_LABELS=[
+  ["skip",/^(postes? secondaires?|autres? postes?|secondary positions?|other positions?)$/],
+  ["name",/^(noms? (et|&) prenoms?|noms? prenoms?|prenoms? (et|&) noms?|nom complet|nom du joueur|full name|player'?s? name|name of (the )?player|name)$/],
+  ["last",/^(nom|nom de famille|surname|last name|family name)$/],
+  ["first",/^(prenoms?|first names?|given names?)$/],
+  ["dob",/^(date (de|of) naissance|date et lieu de naissance|nee? le|date of birth|birth ?date|d ?o ?b|born( on)?|annee de naissance|year of birth)$/],
+  ["pos",/^(poste( principal)?|position( principale)?|main position|primary position|playing position|poste occupe)$/],
+  ["foot",/^(pied( fort| prefere)?|(strong|stronger|preferred|best) foot|foot|lateralite)$/],
+  ["num",/^(numero( de maillot)?|n ?° ?(de )?maillot|dossard|maillot|(jersey|shirt|squad|kit) (number|no|n°)|jersey|shirt)$/],
+  ["skip",/^(lieu de naissance|place of birth|birth ?place|nationalites?|nationality|taille|height|poids|weight|club( actuel)?|current club|categorie|category|age|adresse|address|telephone|tel|phone|e-?mail|ecole|school|parents?|tuteur|guardian|contact|sexe|gender)$/]];
+function profileLabel(s){const t=deacc(s).replace(/[()]/g,"").replace(/[^a-z0-9°&' ]+/g," ").replace(/\s+/g," ").trim();const l=PROFILE_LABELS.find(([,re])=>re.test(t));return l?l[0]:""}
+function parseProfile(text){
+  /* two-column forms put several "Label : value" pairs on one line: a cell that starts with a known label opens a new field */
+  const cells=[];
+  String(text||"").split(/\r?\n/).forEach(line=>{let open=false;const cs=line.split(/\s{3,}|\t/).map(c=>c.trim()).filter(Boolean);
+    cs.forEach(c=>{const m=c.match(/^([^:：]{2,40}?)\s*[:：]/);
+      if(open&&!(m&&profileLabel(m[1])))cells[cells.length-1].t+=" "+c;else{cells.push({t:c,whole:cs.length===1});open=true}})});
+  /* a label with nothing after it takes the next line; a bare label without a colon counts only on a line of its own (not a table header) */
+  const lab=c=>{const m=c.t.match(/^([^:：]{2,40}?)\s*[:：]\s*(.*)$/);if(m){const k=profileLabel(m[1]);if(k)return [k,m[2].trim(),m[1]]}
+    return c.whole&&profileLabel(c.t)?[profileLabel(c.t),"",c.t]:null};
+  const f={};let lastFr=false;
+  for(let i=0;i<cells.length;i++){const l=lab(cells[i]);if(!l)continue;let [k,v,raw]=l;
+    if(!v&&cells[i+1]&&!lab(cells[i+1]))v=cells[++i].t;
+    if(v&&k!=="skip"&&f[k]==null){f[k]=v;if(k==="last")lastFr=/^nom/i.test(deacc(raw))}}
+  const name=cleanName(f.name||(f.last&&f.first?(lastFr?f.last+" "+f.first:f.first+" "+f.last):f.last||f.first||""));
+  const yr=(f.dob||"").match(/\b(19[89]\d|20[0-2]\d)\b/),position=f.pos?posFromPhrase(f.pos):"",ft=deacc(f.foot||"");
+  const foot=/ambi|both|deux|2 pieds/.test(ft)?"Both":/gauche|left|^g$|^l$/.test(ft)?"Left":/droit|right|^d$|^r$/.test(ft)?"Right":"";
+  const nm=(f.num||"").match(/\b(\d{1,2})\b/);
+  if(name.replace(/[^\p{L}]/gu,"").length<3||!(yr||position||foot))return null;
+  return {include:true,number:nm?+nm[1]:null,name,position,birthYear:yr?+yr[1]:null,foot};
+}
 /* layout-aware parsing: squad graphics are usually a grid of player cards (number / NAME / position stacked under each photo),
    which Tesseract reads across the cards, so line-by-line parsing mixes players. Rebuild each card from the word boxes instead. */
 function ocrWords(data){
@@ -1562,7 +1595,7 @@ function mergeRows(rows){
     const m=out.find(o=>!(o.number!=null&&r.number!=null&&o.number!==r.number)&&(r.name&&nameKey(o.name)===nameKey(r.name))||(o.number!=null&&o.number===r.number&&(!o.name||!r.name||nameSim(o.name,r.name)>=.5))||((o.number==null||r.number==null)&&r.name&&o.name&&nameSim(o.name,r.name)>=.75));
     if(!m){out.push({...r});return}
     if(r.name.length>m.name.length&&(!m.name||nameSim(m.name,r.name)>=.5))m.name=r.name;
-    ["number","position","birthYear"].forEach(k=>{if((m[k]==null||m[k]==="")&&r[k]!=null&&r[k]!=="")m[k]=r[k]})});
+    ["number","position","birthYear","foot"].forEach(k=>{if((m[k]==null||m[k]==="")&&r[k]!=null&&r[k]!=="")m[k]=r[k]})});
   return out;
 }
 function prepImage(file){
@@ -1596,7 +1629,7 @@ function openImport(team){
   drop.addEventListener("dragover",e=>{e.preventDefault();drop.classList.add("over")});
   drop.addEventListener("dragleave",()=>drop.classList.remove("over"));
   drop.addEventListener("drop",e=>{e.preventDefault();drop.classList.remove("over");const fs=[...e.dataTransfer.files].filter(f=>f.type.startsWith("image/")||isPDF(f));if(fs.length)runOCR(fs)});
-  $("#imp-parse").onclick=()=>{const rows=parseSquad($("#imp-text").value);if(!rows.length){toast("No players found in the text");return}imp.rows=rows;renderReview()};
+  $("#imp-parse").onclick=()=>{const prof=parseProfile($("#imp-text").value),rows=prof?[prof]:parseSquad($("#imp-text").value);if(!rows.length){toast("No players found in the text");return}imp.rows=rows;renderReview()};
 }
 /* PDF squad lists: most are exported from a website or Word and carry real text, which is read exactly with its layout;
    scanned PDFs have only page images, which go through text recognition like a photo */
@@ -1649,7 +1682,9 @@ async function runOCR(files){
   }
   async function ocr(canvas,label){
     const w=await getWorker();say(`${label}: reading text…`);
-    const res=parseOCR((await w.recognize(canvas,{},{text:true,tsv:true})).data);
+    const data=(await w.recognize(canvas,{},{text:true,tsv:true})).data,prof=parseProfile(data.text);
+    if(prof){all.push(prof);return true}
+    const res=parseOCR(data);
     all.push(...res.rows);
     if(res.cards){/* card grids: a sparse-text pass catches labels the page-layout pass skipped */
       say(`${label}: second pass over the player cards…`);
@@ -1667,14 +1702,18 @@ async function runOCR(files){
       let lib;try{lib=await loadPDF()}catch(e){why="pdf";throw e}
       let doc;try{doc=await lib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise}catch(e){why="badpdf";throw e}
       const n=Math.min(doc.numPages,30);
+      /* once a page is a player sheet, the pages without one are its continuation (qualities, club details), not a list */
+      let sheets=false;
       for(let p=1;p<=n;p++){
         const page=await doc.getPage(p),label=`Page ${p} of ${n}${of}`,w1=page.getViewport({scale:1}).width;
         say(`${label}…`);const b=$("#ocr-bar");if(b)b.style.width=Math.round(p/n*100)+"%";
         imp.images.push(await canvasURL(await pdfCanvas(page,Math.min(1.5,900/w1))));
         const {words,text}=await pdfWords(page,2);
-        if(words.reduce((a,w)=>a+w.text.replace(/[^\p{L}]/gu,"").length,0)>=20){all.push(...parseLayout(words,text).rows);continue}
+        if(words.reduce((a,w)=>a+w.text.replace(/[^\p{L}]/gu,"").length,0)>=20){const prof=parseProfile(text);
+          if(prof){all.push(prof);sheets=true}else if(!sheets)all.push(...parseLayout(words,text).rows);continue}
         const c=await pdfCanvas(page,Math.min(4,2600/w1));
-        const g=c.getContext("2d");g.filter="grayscale(1)";g.drawImage(c,0,0);await ocr(c,label);
+        const g=c.getContext("2d");g.filter="grayscale(1)";g.drawImage(c,0,0);
+        const n0=all.length;if(await ocr(c,label))sheets=true;else if(sheets)all.length=n0;
       }
       doc.destroy();
     }
@@ -1692,35 +1731,38 @@ async function runOCR(files){
 const saveCount=()=>imp.rows.filter(r=>r.include&&r.name.trim()).length;
 function renderReview(){
   const t=imp.team,existing=playersOf(t.id);
-  const byNum=n=>n!=null&&n!==""?existing.find(p=>+p.number===+n):null;
+  /* the same shirt number, or (player sheets often have no number) the same name, is an existing player to update */
+  const byNum=r=>(r.number!=null&&r.number!==""?existing.find(p=>+p.number===+r.number):null)
+    ||(r.name.trim()?existing.find(p=>nameKey(p.name)===nameKey(r.name)&&!(r.number!=null&&r.number!==""&&p.number!==""&&p.number!=null&&+p.number!==+r.number)):null);
   const box=$("#imp-review");
   const posOpts=v=>`<option value="">—</option>`+POS.map(([k])=>posOption(k,v)).join("");
   box.innerHTML=`<div class="review">
     ${imp.images.length?`<div class="thumbs">${imp.images.map(u=>`<a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="Uploaded image"></a>`).join("")}<span class="muted" style="font-size:.8rem">Click to enlarge</span></div>`:""}
     <div style="min-width:0;flex:1">
       <div class="spread"><h3>${imp.rows.length} rows found. Check and fix before saving</h3><button class="btn sm" id="imp-add">+ Row</button></div>
-      <div class="scroll-x"><table class="imp"><thead><tr><th></th><th>No.</th><th>Name</th><th>Position</th><th>Born</th><th></th></tr></thead><tbody>
-      ${imp.rows.map((r,i)=>{const ex=byNum(r.number);return `<tr class="${r.include?"":"off"}">
+      <div class="scroll-x"><table class="imp"><thead><tr><th></th><th>No.</th><th>Name</th><th>Position</th><th>Born</th><th>Foot</th><th></th></tr></thead><tbody>
+      ${imp.rows.map((r,i)=>{const ex=byNum(r);return `<tr class="${r.include?"":"off"}">
         <td><input type="checkbox" data-i="${i}" data-k="include" ${r.include?"checked":""} aria-label="Include"></td>
         <td><input class="n" type="number" min="0" max="99" data-i="${i}" data-k="number" value="${r.number??""}"></td>
         <td><input class="nm" data-i="${i}" data-k="name" value="${esc(r.name)}" dir="auto" placeholder="Name not read, type it in"></td>
         <td><select data-i="${i}" data-k="position">${posOpts(r.position)}</select></td>
         <td><input class="y" type="number" min="1990" max="2022" data-i="${i}" data-k="birthYear" value="${r.birthYear??""}"></td>
-        <td>${ex?`<span class="tag upd" title="${esc(ex.name)}">Updates #${esc(ex.number)}</span>`:`<span class="tag new">New</span>`}</td></tr>`}).join("")}
+        <td><select data-i="${i}" data-k="foot">${["","Right","Left","Both"].map(v=>`<option value="${v}" ${(r.foot||"")===v?"selected":""}>${v||"—"}</option>`).join("")}</select></td>
+        <td>${ex?`<span class="tag upd" title="${esc(ex.name)}">Updates ${ex.number!==""&&ex.number!=null?"#"+esc(ex.number):esc(ex.name)}</span>`:`<span class="tag new">New</span>`}</td></tr>`}).join("")}
       </tbody></table></div>
       <div class="row" style="margin-top:10px"><button class="btn primary big" id="imp-save">Add ${saveCount()} players to squad</button><span class="muted">A player whose number is already in the squad is updated, not duplicated.</span></div>
     </div></div>`;
   $$("[data-k]",box).forEach(el=>el.onchange=()=>{const r=imp.rows[+el.dataset.i],k=el.dataset.k;
     if(k==="include")r.include=el.checked;else if(k==="number"||k==="birthYear")r[k]=el.value===""?null:+el.value;else r[k]=el.value;
-    if(k==="include"||k==="number")renderReview();else{const s=$("#imp-save");s.textContent=`Add ${saveCount()} players to squad`}});
-  $("#imp-add").onclick=()=>{imp.rows.push({include:true,number:null,name:"",position:"",birthYear:null});renderReview();const ins=$$(".imp .nm");ins[ins.length-1].focus()};
+    if(k==="include"||k==="number"||k==="name")renderReview();else{const s=$("#imp-save");s.textContent=`Add ${saveCount()} players to squad`}});
+  $("#imp-add").onclick=()=>{imp.rows.push({include:true,number:null,name:"",position:"",birthYear:null,foot:""});renderReview();const ins=$$(".imp .nm");ins[ins.length-1].focus()};
   $("#imp-save").onclick=()=>{
     let added=0,updated=0;
     imp.rows.filter(r=>r.include&&r.name.trim()).forEach(r=>{
-      const ex=byNum(r.number);
-      const data={name:r.name.trim(),number:r.number??"",position:r.position||"",birthYear:r.birthYear||null};
-      if(ex){Object.assign(ex,{name:data.name,position:data.position||ex.position,birthYear:data.birthYear||ex.birthYear});updated++}
-      else{S.players.push({id:uid(),createdAt:Date.now(),teamId:t.id,foot:"",...data});added++}
+      const ex=byNum(r);
+      const data={name:r.name.trim(),number:r.number??"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};
+      if(ex){Object.assign(ex,{name:data.name,number:data.number!==""?data.number:ex.number,position:data.position||ex.position,birthYear:data.birthYear||ex.birthYear,foot:data.foot||ex.foot});updated++}
+      else{S.players.push({id:uid(),createdAt:Date.now(),teamId:t.id,...data});added++}
     });
     save();imp=null;closeModal();refresh();toast(`Added ${added} players${updated?`, updated ${updated}`:""}`);
   };
