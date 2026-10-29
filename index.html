@@ -863,7 +863,7 @@ const Team={
       body.innerHTML=`<div class="scroll-x"><table><thead><tr><th>No.</th><th>Name</th><th>Position</th><th>Born</th><th>Foot</th><th>Clips</th><th></th></tr></thead><tbody>
         ${ps.map(p=>`<tr><td>${kit(t,p.number)}</td><td><a href="#/player/${esc(p.id)}">${esc(p.name)}</a></td><td>${esc(POSL[p.position]||"")}</td><td class="num">${esc(p.birthYear||"")}</td><td>${esc(footL(p.foot))}</td><td class="num">${cc[p.id]||0}</td><td><button class="btn ghost danger sm" data-delp="${esc(p.id)}">Delete</button></td></tr>`).join("")||`<tr><td colspan="7" class="muted">No players in the squad yet.</td></tr>`}
       </tbody></table></div>
-      <div class="spread panel sub"><span><b>Got a player list from the academy?</b> <span class="muted">Upload a screenshot or paste text and the names, numbers and birth years go straight into the squad.</span></span><button class="btn primary" id="t-import">Import squad from image</button></div>
+      <div class="spread panel sub"><span><b>Got a player list from the academy?</b> <span class="muted">Upload a screenshot or PDF, or paste text, and the names, numbers, positions and birth years go straight into the squad.</span></span><button class="btn primary" id="t-import">Import squad (image / PDF)</button></div>
       <form id="pf" class="formgrid panel sub">
         <label class="f">Shirt number<input type="number" min="0" max="99" id="pf-num" required inputmode="numeric"></label>
         <label class="f">Player name<input id="pf-name" required></label>
@@ -1343,7 +1343,9 @@ function loadOCR(){
 }
 const POS_WORDS=[[/^(GK|GKP|G|GOALKEEPER|KEEPER|GARDIEN|GB|שוער)$/,"GK"],[/^(RB|RWB|LATERAL\s?DROIT|DD)$/,"RB"],[/^(LB|LWB|DG)$/,"LB"],[/^(CB|DC|DF|DEF|D|DEFENDER|DEFENSEUR|DÉFENSEUR|בלם|מגן)$/,"CB"],
   [/^(DM|CDM|MDC)$/,"DM"],[/^(CM|MC|MF|MID|M|MIDFIELDER|MILIEU|קשר)$/,"CM"],[/^(AM|CAM|MOC)$/,"AM"],[/^(RW|RM|AD|WINGER|כנף)$/,"RW"],[/^(LW|LM|AG)$/,"LW"],[/^(ST|CF|FW|F|FWD|STRIKER|FORWARD|ATT|ATTAQUANT|BU|AC|חלוץ)$/,"ST"]];
-const NOISE=/^(NO|N°|NR|NUM|NUMBER|NAME|NAMES|NOM|PRENOM|PRÉNOM|SURNAME|PLAYER|PLAYERS|JOUEUR|POS|POSITION|DOB|DATE|BIRTH|YEAR|SQUAD|TEAM|LIST|S\/N|SN|שם|מספר|עמדה|שנתון)$/i;
+const NOISE=/^(NO|N°|NR|NUM|NUMBER|NAME|NAMES|NOM|PRENOM|PRÉNOM|SURNAME|PLAYER|PLAYERS|JOUEUR|JOUEURS|POS|POSITION|DOB|DATE|BIRTH|YEAR|SQUAD|SQUADS|EFFECTIF|TEAM|LIST|S\/N|SN|שם|מספר|עמדה|שנתון)$/i;
+/* "Jersey No: #16", "Shirt number 7", "N° 10": an explicit shirt-number label, often a few lines under the name on player cards */
+const JERSEY=/\b(jersey|shirt|kit|maillot|dossard|numero|number|num|no|nr|n°)\b[\s.:#°º-]*#?\s*(\d{1,2})\b/i;
 /* full position phrases as written on squad cards and team sheets ("Right lateral", "Left winger", "Défenseur central"…) */
 const POS_PHRASES=[[/goal ?keeper|gardien|portero|goleiro|guarda.?redes/,"GK"],
   [/(right|droit|direito|derecho).{0,12}(lateral|back|full)|(lateral|arriere|back).{0,6}(right|droit|direito|derecho)/,"RB"],
@@ -1351,11 +1353,11 @@ const POS_PHRASES=[[/goal ?keeper|gardien|portero|goleiro|guarda.?redes/,"GK"],
   [/centr\w* ?def|(centre|center|central) ?back|defenseur|defender|defence|defense|stopper|libero|zagueiro|defensa/,"CB"],
   [/defensive ?mid|holding ?mid|milieu ?defensif|sentinelle|volante|pivote/,"DM"],
   [/attacking ?mid|offensive ?mid|milieu ?offensif|meneur|playmaker|meia/,"AM"],
-  [/(left|gauche|esquerdo|izquierdo).{0,8}(wing|ailier|mid|extremo)|(wing|ailier|extremo).{0,8}(left|gauche|esquerdo|izquierdo)/,"LW"],
+  [/(left|gauche|esquerdo|izquierdo).{0,8}(wing|ailier|mid|extremo|side ?forward)|(wing|ailier|extremo).{0,8}(left|gauche|esquerdo|izquierdo)/,"LW"],
   [/(right|droit|direito|derecho).{0,8}(wing|ailier|mid|extremo)|wing|ailier|extremo|ponta/,"RW"],
   [/mid ?field|milieu|medio|meio|centrocampista/,"CM"],
   [/forward|striker|attaquant|avant.?centre|buteur|avancado|atacante|delantero|punta/,"ST"],[/lateral/,"RB"]];
-const POS_VOCAB=["right","left","central","centre","center","centr","lateral","defender","defence","defense","defensive","midfielder","midfield","mid","winger","wing","forward","striker","goalkeeper","keeper","goal","back","full","attacking","offensive","holding","second","droit","gauche","defenseur","defensif","milieu","ailier","attaquant","avant","gardien","arriere","offensif","direito","esquerdo","zagueiro","volante","atacante","extremo","meia","ponta","goleiro","derecho","izquierdo","defensa","medio","delantero"];
+const POS_VOCAB=["right","left","central","centre","center","centr","lateral","defender","defence","defense","defensive","midfielder","midfield","mid","winger","wing","forward","striker","goalkeeper","keeper","goal","back","full","attacking","offensive","holding","second","side","droit","gauche","defenseur","defensif","milieu","ailier","attaquant","avant","gardien","arriere","offensif","direito","esquerdo","zagueiro","volante","atacante","extremo","meia","ponta","goleiro","derecho","izquierdo","defensa","medio","delantero"];
 const deacc=s=>String(s).normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();
 /* small print is often misread by a letter or two ("Detensive", "latera"), so snap near-misses to the vocabulary */
 function vocabWord(w){w=deacc(w).replace(/[^a-z]/g,"");if(w.length<3)return "";
@@ -1405,9 +1407,12 @@ function ocrWords(data){
 }
 function segKind(s){
   const t=s.text.replace(/[^\p{L}\d'’\- ]/gu," ").replace(/\s+/g," ").trim();
-  if(/^#?\d{1,2}\.?$/.test(s.text.replace(/\s/g,"")))return "num";
+  if(/^#?\d{1,2}\.?$/.test(s.text.replace(/\s/g,""))){s.numVal=+s.text.replace(/\D/g,"");return "num"}
+  const jm=s.text.match(JERSEY);
+  if(jm&&!/(weight|height|poids|taille|kg|cm|ft)\b/i.test(s.text)){s.numVal=+jm[2];s.jersey=true;return "num"}
   if(t.replace(/[^\p{L}]/gu,"").length<3)return "junk";
-  const ws=t.split(" ").filter(w=>/\p{L}/u.test(w));
+  /* "CENTRE-BACK", "LEFT FULL-BACK": judge each half of a hyphenated word */
+  const ws=t.split(/[\s\-]+/).filter(w=>/\p{L}/u.test(w));
   if(ws.every(w=>NOISE.test(w)))return "junk";
   if(posFromPhrase(t)&&ws.filter(isPosWord).length*2>=ws.length)return "pos";
   /* card names are printed in capitals; mixed-case text with a position word is a misread position */
@@ -1431,15 +1436,16 @@ function ocrSegments(words){
 const xOverlap=(a,b,pad=0)=>Math.min(a.x1,b.x1)+pad>Math.max(a.x0,b.x0);
 /* the label that sits directly above (dir -1) or below (dir 1) a card name, or just left of it on the same line */
 function labelDist(c,s,dir){
-  const h=c.h,near=s.cx>c.x0-h&&s.cx<c.x1+h&&xOverlap(c,s,h);
+  const h=c.h,near=(s.cx>c.x0-h&&s.cx<c.x1+h||Math.abs(s.x0-c.x0)<h*.8)&&xOverlap(c,s,h);
   if(near&&dir<0&&s.y1<=c.y0+h*.3&&c.y0-s.y1<h*4)return c.y0-s.y1+Math.abs(s.cx-(c.x0+c.x1)/2)*.3;
-  if(near&&dir>0&&s.y0>=c.y1-h*.3&&s.y0-c.y1<h*3.5)return s.y0-c.y1+Math.abs(s.cx-(c.x0+c.x1)/2)*.3;
+  /* a labelled "Jersey No" line can sit under the position and a weight/height line */
+  if(near&&dir>0&&s.y0>=c.y1-h*.3&&s.y0-c.y1<h*(s.jersey?8:3.5))return s.y0-c.y1+Math.abs(s.cx-(c.x0+c.x1)/2)*.3;
   if(dir<0&&s.row===c.seg.row&&s.x1<=c.x0+2&&c.x0-s.x1<h*3)return (c.x0-s.x1)*.5;
   return Infinity;
 }
 function assignLabels(cards,list,key,dirs){
   const pairs=[];
-  cards.forEach(c=>list.forEach(s=>dirs.forEach(([d,pen])=>{const v=labelDist(c,s,d);if(v<Infinity)pairs.push([v*pen,c,s])})));
+  cards.forEach(c=>list.forEach(s=>dirs.forEach(([d,pen])=>{const v=labelDist(c,s,d);if(v<Infinity)pairs.push([v*(s.jersey?(d>0?.5:3):pen),c,s])})));
   const used=new Set();
   pairs.sort((a,b)=>a[0]-b[0]).forEach(([,c,s])=>{if(c[key]||used.has(s))return;c[key]=s;used.add(s)});
   return used;
@@ -1459,27 +1465,28 @@ function parseCards(segs){
     cards.push(c)});
   const nums=segs.filter(s=>s.kind==="num"),poss=segs.filter(s=>s.kind==="pos");
   const usedN=assignLabels(cards,nums,"num",[[-1,1],[1,1.6]]),usedP=assignLabels(cards,poss,"pos",[[1,1],[-1,1.6]]);
-  const rows=cards.map(c=>{let text=c.text,number=c.num?+c.num.text.replace(/\D/g,""):null;
+  const rows=cards.map(c=>{let text=c.text,number=c.num?c.num.numVal:null;
     const lead=text.match(/^#?(\d{1,2})[\s.)\-]+/);if(lead){if(number==null)number=+lead[1];text=text.slice(lead[0].length)}
     const yr=text.match(/\b(19[89]\d|20[0-2]\d)\b/);
     return {include:true,number,name:cleanName(text),position:c.pos?posFromPhrase(c.pos.text):"",birthYear:yr?+yr[1]:null,_y:c.y0,_x:c.x0,_h:c.h,_lab:!!(c.num||c.pos)}});
   /* a number with a position under it but no readable name: keep it so the name can be typed in */
   nums.filter(s=>!usedN.has(s)).forEach(s=>{const p=poss.find(p=>!usedP.has(p)&&xOverlap(s,p,s.h)&&p.y0>=s.y1-2&&p.y0-s.y1<s.h*6);
-    if(p){usedP.add(p);rows.push({include:true,number:+s.text.replace(/\D/g,""),name:"",position:posFromPhrase(p.text),birthYear:null,_y:s.y0,_x:s.x0,_h:s.h,_lab:true})}});
-  /* drop stray words (photo backgrounds, titles) that have neither a number nor a position next to them */
+    if(p){usedP.add(p);rows.push({include:true,number:s.numVal,name:"",position:posFromPhrase(p.text),birthYear:null,_y:s.y0,_x:s.x0,_h:s.h,_lab:true})}});
+  /* drop stray words (photo backgrounds, shirt prints, titles) that have neither a number nor a position next to them */
   const labelled=rows.filter(r=>r._lab).length;
-  return rows.filter(r=>r.name.length>=3||r.number!=null).filter(r=>r._lab||labelled<2||(r.name===titleCase(r.name)&&r.name.split(" ").length>=2))
+  return rows.filter(r=>r.name.length>=3||r.number!=null).filter(r=>r._lab||labelled<2||(labelled<4&&r.name===titleCase(r.name)&&r.name.split(" ").length>=2))
     .sort((a,b)=>Math.abs(a._y-b._y)<Math.max(a._h,b._h)*2?a._x-b._x:a._y-b._y)
     .map(({_y,_x,_h,_lab,...r})=>r);
 }
 /* card layout when the labels (number / position) sit above or below the names rather than beside them */
-function parseOCR(data){
-  const segs=ocrSegments(ocrWords(data)),names=segs.filter(s=>s.kind==="name");
+const parseOCR=data=>parseLayout(ocrWords(data),data.text);
+function parseLayout(words,text){
+  const segs=ocrSegments(words),names=segs.filter(s=>s.kind==="name");
   const stacked=names.filter(n=>segs.some(s=>(s.kind==="num"||s.kind==="pos")&&s.row!==n.row&&xOverlap(n,s)&&(s.y1<=n.y0+2?n.y0-s.y1<n.h*4:s.y0>=n.y1-2&&s.y0-n.y1<n.h*3.5))).length;
   const perRow={};segs.forEach(s=>{if(s.kind!=="junk"){const k=s.row+s.kind;perRow[k]=(perRow[k]||0)+1}});
   const multi=Object.values(perRow).filter(v=>v>=2).length;
   if(stacked&&(stacked*2.5>=names.length||multi))return {cards:true,rows:parseCards(segs)};
-  return {cards:false,rows:parseSquad(data.text)};
+  return {cards:false,rows:parseSquad(text)};
 }
 const nameKey=s=>deacc(s).replace(/[^a-z]/g,"");
 function lev(a,b){const d=[...Array(b.length+1).keys()];for(let i=1;i<=a.length;i++){let p=d[0];d[0]=i;for(let j=1;j<=b.length;j++){const t=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,p+(a[i-1]===b[j-1]?0:1));p=t}}return d[b.length]}
@@ -1488,8 +1495,8 @@ function nameSim(a,b){const A=deacc(a).split(/[^a-z]+/).filter(w=>w.length>1),B=
 /* the same player read twice (overlapping screenshots, or the second OCR pass) is merged into one row */
 function mergeRows(rows){
   const out=[];
-  rows.forEach(r=>{
-    const m=out.find(o=>(r.name&&nameKey(o.name)===nameKey(r.name))||(o.number!=null&&o.number===r.number&&(!o.name||!r.name||nameSim(o.name,r.name)>=.5))||((o.number==null||r.number==null)&&r.name&&o.name&&nameSim(o.name,r.name)>=.75));
+  rows.forEach(r=>{/* two players can share a name (brothers), so different shirt numbers never merge */
+    const m=out.find(o=>!(o.number!=null&&r.number!=null&&o.number!==r.number)&&(r.name&&nameKey(o.name)===nameKey(r.name))||(o.number!=null&&o.number===r.number&&(!o.name||!r.name||nameSim(o.name,r.name)>=.5))||((o.number==null||r.number==null)&&r.name&&o.name&&nameSim(o.name,r.name)>=.75));
     if(!m){out.push({...r});return}
     if(r.name.length>m.name.length&&(!m.name||nameSim(m.name,r.name)>=.5))m.name=r.name;
     ["number","position","birthYear"].forEach(k=>{if((m[k]==null||m[k]==="")&&r[k]!=null&&r[k]!=="")m[k]=r[k]})});
@@ -1507,10 +1514,10 @@ let imp=null;
 function openImport(team){
   imp={team,rows:[],images:[]};
   openModal(`<div class="spread"><h2>Import squad · ${esc(team.name)}</h2><button class="btn ghost" data-close>Close</button></div>
-    <div class="tabs" role="tablist" id="imp-tabs"><button role="tab" data-k="img" aria-selected="true">From image</button><button role="tab" data-k="txt" aria-selected="false">From text</button></div>
+    <div class="tabs" role="tablist" id="imp-tabs"><button role="tab" data-k="img" aria-selected="true">From image or PDF</button><button role="tab" data-k="txt" aria-selected="false">From text</button></div>
     <div id="imp-img">
-      <label class="drop" id="imp-drop" for="imp-file"><b>Choose an image of the player list</b><span class="muted">A WhatsApp screenshot, a squad graphic or a team sheet. You can pick several images at once.</span><span class="btn primary">Choose images</span></label>
-      <input type="file" id="imp-file" accept="image/*" multiple hidden>
+      <label class="drop" id="imp-drop" for="imp-file"><b>Choose an image or PDF of the player list</b><span class="muted">A WhatsApp screenshot, a squad graphic, a team sheet or a PDF the academy sent. You can pick several files at once.</span><span class="btn primary">Choose files</span></label>
+      <input type="file" id="imp-file" accept="image/*,application/pdf,.pdf" multiple hidden>
       <div class="row"><label class="f" style="flex-direction:row;align-items:center;gap:8px">List language<select id="imp-lang"><option value="eng">English</option><option value="eng+fra">English + French</option><option value="eng+por">English + Portuguese</option></select></label></div>
     </div>
     <div id="imp-txt" hidden>
@@ -1525,40 +1532,98 @@ function openImport(team){
   const drop=$("#imp-drop");
   drop.addEventListener("dragover",e=>{e.preventDefault();drop.classList.add("over")});
   drop.addEventListener("dragleave",()=>drop.classList.remove("over"));
-  drop.addEventListener("drop",e=>{e.preventDefault();drop.classList.remove("over");const fs=[...e.dataTransfer.files].filter(f=>f.type.startsWith("image/"));if(fs.length)runOCR(fs)});
+  drop.addEventListener("drop",e=>{e.preventDefault();drop.classList.remove("over");const fs=[...e.dataTransfer.files].filter(f=>f.type.startsWith("image/")||isPDF(f));if(fs.length)runOCR(fs)});
   $("#imp-parse").onclick=()=>{const rows=parseSquad($("#imp-text").value);if(!rows.length){toast("No players found in the text");return}imp.rows=rows;renderReview()};
 }
+/* PDF squad lists: most are exported from a website or Word and carry real text, which is read exactly with its layout;
+   scanned PDFs have only page images, which go through text recognition like a photo */
+const PDF_SRC="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+let pdfLib=null;
+function loadPDF(){
+  if(pdfLib)return pdfLib;
+  pdfLib=new Promise((res,rej)=>{if(window.pdfjsLib)return res(window.pdfjsLib);const s=document.createElement("script");s.src=PDF_SRC+"pdf.min.js";
+    s.onload=()=>{window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDF_SRC+"pdf.worker.min.js";res(window.pdfjsLib)};s.onerror=()=>{pdfLib=null;rej()};document.head.appendChild(s)});
+  return pdfLib;
+}
+const isPDF=f=>f.type==="application/pdf"||/\.pdf$/i.test(f.name);
+/* the page's text runs as word boxes in the same shape the OCR produces, so the same card/list parsing applies */
+async function pdfWords(page,k){
+  const vp=page.getViewport({scale:k}),items=[];
+  (await page.getTextContent()).items.forEach(it=>{const t=it.transform;if(!it.str||!it.str.trim()||Math.abs(t[1])>.01)return;
+    const fs=Math.hypot(t[2],t[3])*k;if(fs<2)return;const [x,y]=vp.convertToViewportPoint(t[4],t[5]);
+    items.push({text:it.str,x0:x,x1:x+it.width*k,y0:y-fs*.78,y1:y+fs*.22,fs,base:y})});
+  items.sort((a,b)=>Math.abs(a.base-b.base)<Math.min(a.fs,b.fs)*.3?a.x0-b.x0:a.base-b.base);
+  const words=[];/* glue runs split mid-word (bold letters, kerning) back together */
+  items.forEach(it=>{const p=words[words.length-1],gap=p?it.x0-p.x1:0;
+    if(p&&Math.abs(p.base-it.base)<Math.min(p.fs,it.fs)*.3&&gap<it.fs*.25&&gap>-it.fs){p.text+=(gap>it.fs*.1&&!/\s$/.test(p.text)&&!/^\s/.test(it.text)?" ":"")+it.text;p.x1=Math.max(p.x1,it.x1);p.y0=Math.min(p.y0,it.y0);p.y1=Math.max(p.y1,it.y1)}
+    else words.push({...it})});
+  const lines=[];words.forEach(w=>{const l=lines.find(l=>Math.abs(l.base-w.base)<w.fs*.3);if(l)l.t.push(w.text);else lines.push({base:w.base,t:[w.text]})});
+  return {words:words.map(w=>({text:w.text.replace(/\s+/g," ").trim(),conf:96,x0:w.x0,y0:w.y0,x1:w.x1,y1:w.y1})),text:lines.map(l=>l.t.join("   ")).join("\n")};
+}
+async function pdfCanvas(page,k){
+  const vp=page.getViewport({scale:k}),c=document.createElement("canvas");c.width=Math.round(vp.width);c.height=Math.round(vp.height);
+  const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);/* "print" renders without animation frames, so a long PDF keeps going while the tab is in the background */
+  await page.render({canvasContext:x,viewport:vp,intent:"print"}).promise;return c;
+}
+const canvasURL=c=>new Promise(res=>c.toBlob(b=>res(URL.createObjectURL(b)),"image/jpeg",.85));
 async function runOCR(files){
   const st=$("#imp-status");
-  st.innerHTML=`<div class="panel sub"><span id="ocr-msg">Loading the text-recognition engine…</span><div class="bar"><i id="ocr-bar"></i></div></div>`;
-  let T;try{T=await loadOCR()}catch(e){st.innerHTML=`<div class="notice">Couldn't load the text-recognition engine. Check your internet connection, or paste the list as text.</div>`;return}
-  const lang=$("#imp-lang").value;
-  let worker;
-  try{
+  st.innerHTML=`<div class="panel sub"><span id="ocr-msg">Reading the files…</span><div class="bar"><i id="ocr-bar"></i></div></div>`;
+  const say=t=>{const m=$("#ocr-msg");if(m)m.textContent=t};
+  const lang=$("#imp-lang").value,all=[];
+  let worker=null,why="";
+  /* the recognition engine is loaded only when an image or a scanned page needs it */
+  async function getWorker(){
+    if(worker)return worker;
+    say("Loading the text-recognition engine…");
+    let T;try{T=await loadOCR()}catch(e){why="engine";throw e}
     let failed=null;
     const wp=T.createWorker(lang,1,Object.assign({errorHandler:e=>{failed=e},logger:m=>{if(!imp)return;const b=$("#ocr-bar");if(b&&m.status==="recognizing text")b.style.width=Math.round(m.progress*100)+"%";
-      const msg=$("#ocr-msg");if(msg)msg.textContent=m.status==="recognizing text"?`Reading text… ${Math.round(m.progress*100)}%`:"Preparing the engine (takes a few seconds the first time)…"}},window.OCR_OPTS||{}));
+      if(m.status!=="recognizing text")say("Preparing the engine (takes a few seconds the first time)…")}},window.OCR_OPTS||{}));
     worker=await Promise.race([wp,new Promise((_,rej)=>{const t0=Date.now();const iv=setInterval(()=>{if(failed||Date.now()-t0>90000){clearInterval(iv);rej(failed||new Error("timeout"))}},500);wp.then(()=>clearInterval(iv),()=>clearInterval(iv))})]);
     await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:"3"});
-    const all=[];
-    for(let i=0;i<files.length;i++){
-      const {canvas,url}=await prepImage(files[i]);imp.images.push(url);
-      const msg=$("#ocr-msg");if(msg)msg.textContent=`Image ${i+1} of ${files.length}…`;
-      const {data}=await worker.recognize(canvas,{},{text:true,tsv:true});
-      const res=parseOCR(data);
-      all.push(...res.rows);
-      if(res.cards){/* card grids: a sparse-text pass catches labels the page-layout pass skipped */
-        if(msg)msg.textContent=`Image ${i+1} of ${files.length}: second pass over the player cards…`;
-        await worker.setParameters({tessedit_pageseg_mode:"11"});
-        const r2=parseOCR((await worker.recognize(canvas,{},{text:true,tsv:true})).data);
-        await worker.setParameters({tessedit_pageseg_mode:"3"});
-        if(r2.cards)all.push(...r2.rows);
-      }
+    return worker;
+  }
+  async function ocr(canvas,label){
+    const w=await getWorker();say(`${label}: reading text…`);
+    const res=parseOCR((await w.recognize(canvas,{},{text:true,tsv:true})).data);
+    all.push(...res.rows);
+    if(res.cards){/* card grids: a sparse-text pass catches labels the page-layout pass skipped */
+      say(`${label}: second pass over the player cards…`);
+      await w.setParameters({tessedit_pageseg_mode:"11"});
+      const r2=parseOCR((await w.recognize(canvas,{},{text:true,tsv:true})).data);
+      await w.setParameters({tessedit_pageseg_mode:"3"});
+      if(r2.cards)all.push(...r2.rows);
     }
-    imp.rows=mergeRows(all);
-    st.innerHTML=all.length?"":`<div class="notice">No players found in the image. Try a sharper image, crop to just the list, or paste the names as text.</div>`;
-    if(all.length)renderReview();
-  }catch(e){console.error(e);st.innerHTML=`<div class="notice">Text recognition failed. Try another image or paste the list as text.</div>`}
+  }
+  try{
+    for(let i=0;i<files.length;i++){
+      const f=files[i],of=files.length>1?` (file ${i+1} of ${files.length})`:"";
+      if(!isPDF(f)){const {canvas,url}=await prepImage(f);imp.images.push(url);await ocr(canvas,`Image${of}`);continue}
+      say(`Opening the PDF${of}…`);
+      let lib;try{lib=await loadPDF()}catch(e){why="pdf";throw e}
+      let doc;try{doc=await lib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise}catch(e){why="badpdf";throw e}
+      const n=Math.min(doc.numPages,30);
+      for(let p=1;p<=n;p++){
+        const page=await doc.getPage(p),label=`Page ${p} of ${n}${of}`,w1=page.getViewport({scale:1}).width;
+        say(`${label}…`);const b=$("#ocr-bar");if(b)b.style.width=Math.round(p/n*100)+"%";
+        imp.images.push(await canvasURL(await pdfCanvas(page,Math.min(1.5,900/w1))));
+        const {words,text}=await pdfWords(page,2);
+        if(words.reduce((a,w)=>a+w.text.replace(/[^\p{L}]/gu,"").length,0)>=20){all.push(...parseLayout(words,text).rows);continue}
+        const c=await pdfCanvas(page,Math.min(4,2600/w1));
+        const g=c.getContext("2d");g.filter="grayscale(1)";g.drawImage(c,0,0);await ocr(c,label);
+      }
+      doc.destroy();
+    }
+    /* the club's own name printed on shirts or the page header is not a player */
+    const tw=deacc(imp.team.name).split(/[^a-z]+/).filter(w=>w.length>2);
+    imp.rows=mergeRows(all).filter(r=>r.number!=null||r.position||!r.name||deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1&&tw.some(v=>lev(w,v)<=1)).length*2<deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1).length);
+    st.innerHTML=imp.rows.length?"":`<div class="notice">No players found. Try a sharper image, crop to just the list, or paste the names as text.</div>`;
+    if(imp.rows.length)renderReview();
+  }catch(e){console.error(e);st.innerHTML=`<div class="notice">${why==="engine"?"Couldn't load the text-recognition engine. Check your internet connection, or paste the list as text."
+    :why==="pdf"?"Couldn't load the PDF reader. Check your internet connection, or send a screenshot of the list instead."
+    :why==="badpdf"?"This PDF couldn't be opened. It may be damaged or password-protected. Try a screenshot of the list instead."
+    :"Text recognition failed. Try another image or paste the list as text."}</div>`}
   finally{if(worker)worker.terminate()}
 }
 const saveCount=()=>imp.rows.filter(r=>r.include&&r.name.trim()).length;
