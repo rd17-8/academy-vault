@@ -1423,7 +1423,7 @@ function loadOCR(){
 }
 const POS_WORDS=[[/^(GK|GKP|G|GOALKEEPER|KEEPER|GARDIEN|GB|שוער)$/,"GK"],[/^(RB|RWB|LATERAL\s?DROIT|DD)$/,"RB"],[/^(LB|LWB|DG)$/,"LB"],[/^(CB|DC|DF|DEF|D|DEFENDER|DEFENSEUR|DÉFENSEUR|בלם|מגן)$/,"CB"],
   [/^(DM|CDM|MDC)$/,"DM"],[/^(CM|MC|MF|MID|M|MIDFIELDER|MILIEU|קשר)$/,"CM"],[/^(AM|CAM|MOC)$/,"AM"],[/^(RW|RM|AD|WINGER|כנף)$/,"RW"],[/^(LW|LM|AG)$/,"LW"],[/^(ST|CF|FW|F|FWD|STRIKER|FORWARD|ATT|ATTAQUANT|BU|AC|חלוץ)$/,"ST"]];
-const NOISE=/^(NO|N°|NR|NUM|NUMBER|NAME|NAMES|NOM|PRENOM|PRÉNOM|SURNAME|PLAYER|PLAYERS|JOUEUR|JOUEURS|POS|POSITION|DOB|DATE|BIRTH|YEAR|SQUAD|SQUADS|EFFECTIF|TEAM|LIST|S\/N|SN|שם|מספר|עמדה|שנתון)$/i;
+const NOISE=/^(NO|N°|NR|NUM|NUMBER|NAME|NAMES|NOM|NOMS|PRENOM|PRÉNOM|PRENOMS|PRÉNOMS|NAISSANCE|REMPLACANTS|REMPLAÇANTS|TITULAIRES|SUBSTITUTES|SURNAME|PLAYER|PLAYERS|JOUEUR|JOUEURS|POS|POSITION|DOB|DATE|BIRTH|YEAR|SQUAD|SQUADS|EFFECTIF|TEAM|LIST|S\/N|SN|שם|מספר|עמדה|שנתון)$/i;
 /* "Jersey No: #16", "Shirt number 7", "N° 10": an explicit shirt-number label, often a few lines under the name on player cards */
 const JERSEY=/\b(jersey|shirt|kit|maillot|dossard|numero|number|num|no|nr|n°)\b[\s.:#°º-]*#?\s*(\d{1,2})\b/i;
 /* full position phrases as written on squad cards and team sheets ("Right lateral", "Left winger", "Défenseur central"…) */
@@ -1451,6 +1451,8 @@ function parseSquad(text){
     let line=raw.replace(/[|_=~•*·\[\]{}<>]+/g," ").replace(/\s+/g," ").trim();
     if(line.length<3)return;
     if(/\b(SQUAD|LIST|ACADEMY|ACADEMIE|ACADÉMIE|CLUB|ROSTER|TEAMSHEET|U-?\d{2})\b/i.test(line)&&!/^\s*#?\d{1,2}[\s.)\-]/.test(line))return;
+    /* venue, matchday, score and column-header lines of team sheets */
+    if((/\b(stade|stadium|journee|matchday|match|feuille|remplacants?|titulaires|substitutes|starting|noms? et prenoms?|date de naissance|date of birth|vs)\b/.test(deacc(line))||/\p{L}\s+\d{1,2}\s*[–—\-:]\s*\d{1,2}\s+\p{L}/u.test(line))&&!/^\s*#?\d{1,2}[\s.)\-]+\p{L}/u.test(line))return;
     let birthYear=null,number=null,position="";
     const dm=line.match(/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-](19[89]\d|20[0-2]\d)\b/);
     if(dm){birthYear=+dm[1];line=line.replace(dm[0]," ")}
@@ -1508,6 +1510,55 @@ function parseProfile(text){
   const nm=(f.num||"").match(/\b(\d{1,2})\b/);
   if(name.replace(/[^\p{L}]/gu,"").length<3||!(yr||position||foot))return null;
   return {include:true,number:nm?+nm[1]:null,name,position,birthYear:yr?+yr[1]:null,foot};
+}
+/* match sheets ("feuille de match", team sheet): line-ups side by side under a "HOME 1 – 1 AWAY" or "HOME vs AWAY" header, one row per
+   shirt number + name (+ date of birth). Only the club's own column is kept, with the opponent and date so the numbers go to that match */
+const SHEET_TITLE=/feuille de match|team ?sheet|match ?sheet|line-?ups?|composition|titulaires|remplacants|starting (xi|eleven|11)|substitutes/;
+function parseMatchSheet(words,text,team){
+  const lines=String(text||"").split(/\r?\n/).map(l=>l.replace(/\s+/g," ").trim()).filter(Boolean);
+  let sides=null,score=null,date=null,ours=-1;
+  lines.forEach(l=>{
+    const d=l.replace(/\s+/g,"").match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](20\d\d)/);/* the match date; dates of birth are years earlier */
+    if(!date&&d&&+d[3]>=2018)date=`${d[3]}-${d[2].padStart(2,"0")}-${d[1].padStart(2,"0")}`;
+    if(sides)return;
+    const m=l.match(/^(.*?\p{L}.*?)\s+(\d{1,2})\s*[–—\-:]\s*(\d{1,2})\s+(.*\p{L}.*)$/u)||l.match(/^(.*?\p{L}.*?)\s+(?:vs\.?|v\.?|contre|x)\s+(.*\p{L}.*)$/iu);
+    if(!m)return;const s=m.length===5?[m[1],m[4]]:[m[1],m[2]],sc=s.map(x=>teamScore(x,team.name));
+    if(Math.max(...sc)>=.6&&Math.min(...sc)<.6){sides=s.map(x=>x.replace(/^(date|match)\b.*?:/i,"").trim());ours=sc[0]>=sc[1]?0:1;if(m.length===5)score=[+m[2],+m[3]]}});
+  /* rows of word boxes; a row that starts with a number holds one "number name (date)" pair per team column */
+  const rows=[];
+  words.slice().sort((a,b)=>(a.y0+a.y1)-(b.y0+b.y1)).forEach(w=>{const cy=(w.y0+w.y1)/2,h=w.y1-w.y0;
+    const r=rows.find(r=>Math.abs(r.cy-cy)<Math.max(3,Math.min(r.h,h)*.6));if(r){r.w.push(w);r.h=Math.max(r.h,h)}else rows.push({cy,h,w:[w]})});
+  const pairs=[];
+  rows.forEach(r=>{const toks=[];r.w.sort((a,b)=>a.x0-b.x0).forEach(w=>w.text.split(/\s+/).filter(Boolean).forEach((t,i)=>toks.push({t,x:i?w.x0+1:w.x0})));
+    if(!/^\d{1,2}[.)]?$/.test(toks[0]?.t||""))return;let cur=null;
+    toks.forEach(k=>{const t=k.t.replace(/[.)]$/,"");
+      if(/^\d{1,2}$/.test(t)){cur={num:+t,x:k.x,names:[],dob:null,y:r.cy};pairs.push(cur)}
+      else if(/^\d{1,2}[\/.\-]\d{1,2}[\/.\-](\d{2}|\d{4})$/.test(t)){if(cur){const y=+t.split(/[\/.\-]/)[2];cur.dob=y<100?2000+y:y}}
+      else if(cur&&/\p{L}/u.test(t))cur.names.push(t)})});
+  const ok=pairs.filter(p=>p.names.join("").replace(/[^\p{L}]/gu,"").length>=3);
+  if(ok.length<5||!sides&&!SHEET_TITLE.test(deacc(text)))return null;
+  /* team columns: the numbers' left edges split where the widest gaps are */
+  const xs=ok.map(p=>p.x).sort((a,b)=>a-b),span=Math.max(...words.map(w=>w.x1))-Math.min(...words.map(w=>w.x0)),cuts=[];
+  for(let i=1;i<xs.length;i++)if(xs[i]-xs[i-1]>span*.1)cuts.push((xs[i]+xs[i-1])/2);
+  ok.forEach(p=>p.col=cuts.filter(c=>p.x>c).length);
+  const ncol=cuts.length+1;let col=0;
+  if(ncol>1){if(sides&&ncol===2)col=ours;
+    else{/* no header naming the clubs: the column with the most known players */
+      const known=playersOf(team.id),hits=[...Array(ncol)].map((_,c)=>ok.filter(p=>p.col===c&&known.some(k=>nameSim(k.name,p.names.join(" "))>=.75)).length);
+      col=hits.indexOf(Math.max(...hits))}}
+  const mine=ok.filter(p=>p.col===col).sort((a,b)=>a.y-b.y);
+  if(mine.length<5)return null;
+  return {sheet:{opp:sides?titleCase(sides[1-ours]):"",date,score,home:ours===0,label:sides?`${titleCase(sides[0])}${score?` ${score[0]}–${score[1]} `:" vs "}${titleCase(sides[1])}`:"Match sheet"},
+    rows:mine.map(p=>({include:true,number:p.num,name:cleanName(p.names.join(" ")),position:"",birthYear:p.dob&&p.dob>=1990&&p.dob<=2022?p.dob:null,foot:""}))};
+}
+/* the existing match a sheet belongs to: same opponent, and the same date when both have one */
+function sheetMatch(team,sh){
+  let best=null,bs=0;
+  S.matches.filter(m=>m.homeId===team.id||m.awayId===team.id).forEach(m=>{const o=byId("teams",m.homeId===team.id?m.awayId:m.homeId);
+    let s=sh.opp&&o?teamScore(sh.opp,o.name):0;
+    if(sh.date&&m.date){const dd=Math.abs(new Date(sh.date)-new Date(m.date))/864e5;s+=dd===0?1:dd<=3?.3:-1}
+    if(s>bs){bs=s;best=m}});
+  return bs>=.6?best:null;
 }
 /* layout-aware parsing: squad graphics are usually a grid of player cards (number / NAME / position stacked under each photo),
    which Tesseract reads across the cards, so line-by-line parsing mixes players. Rebuild each card from the word boxes instead. */
@@ -1626,7 +1677,7 @@ function prepImage(file){
 let imp=null;
 /* with a match, the sheet is that game's team sheet: its numbers are saved for the match only, players are found by name */
 function openImport(team,match=null){
-  imp={team,rows:[],images:[],match};
+  imp={team,rows:[],images:[],match,sheets:[]};
   openModal(`<div class="spread"><h2>${match?"Team sheet":"Import squad"} · ${esc(team.name)}</h2><button class="btn ghost" data-close>Close</button></div>
     ${match?`<p class="muted" style="margin:0">${esc(matchLabel(match))}. The shirt numbers are saved for this match only; the squad numbers don't change. Players not yet in the squad are added.</p>`:""}
     <div class="tabs" role="tablist" id="imp-tabs"><button role="tab" data-k="img" aria-selected="true">From image or PDF</button><button role="tab" data-k="txt" aria-selected="false">From text</button></div>
@@ -1699,10 +1750,18 @@ async function runOCR(files){
     await worker.setParameters({preserve_interword_spaces:"1",tessedit_pageseg_mode:"3"});
     return worker;
   }
+  /* each match sheet keeps its own rows, filed under the match it belongs to (or into the open match) */
+  const sheetRows=[];imp.sheets=[];
+  function addSheet(sh){
+    if(imp.match){all.push(...sh.rows);return}
+    const k=imp.sheets.length,m=sheetMatch(imp.team,sh.sheet);
+    imp.sheets.push({...sh.sheet,matchId:m?m.id:sh.sheet.opp?"new":""});sheetRows.push(...sh.rows.map(r=>({...r,sheet:k})));
+  }
   async function ocr(canvas,label){
     const w=await getWorker();say(`${label}: reading text…`);
     const data=(await w.recognize(canvas,{},{text:true,tsv:true})).data,prof=parseProfile(data.text);
     if(prof){all.push(prof);return true}
+    const sh=parseMatchSheet(ocrWords(data),data.text,imp.team);if(sh){addSheet(sh);return true}
     const res=parseOCR(data);
     all.push(...res.rows);
     if(res.cards){/* card grids: a sparse-text pass catches labels the page-layout pass skipped */
@@ -1728,8 +1787,8 @@ async function runOCR(files){
         say(`${label}…`);const b=$("#ocr-bar");if(b)b.style.width=Math.round(p/n*100)+"%";
         imp.images.push(await canvasURL(await pdfCanvas(page,Math.min(1.5,900/w1))));
         const {words,text}=await pdfWords(page,2);
-        if(words.reduce((a,w)=>a+w.text.replace(/[^\p{L}]/gu,"").length,0)>=20){const prof=parseProfile(text);
-          if(prof){all.push(prof);sheets=true}else if(!sheets)all.push(...parseLayout(words,text).rows);continue}
+        if(words.reduce((a,w)=>a+w.text.replace(/[^\p{L}]/gu,"").length,0)>=20){const prof=parseProfile(text),sh=!prof&&parseMatchSheet(words,text,imp.team);
+          if(prof){all.push(prof);sheets=true}else if(sh){addSheet(sh);sheets=true}else if(!sheets)all.push(...parseLayout(words,text).rows);continue}
         const c=await pdfCanvas(page,Math.min(4,2600/w1));
         const g=c.getContext("2d");g.filter="grayscale(1)";g.drawImage(c,0,0);
         const n0=all.length;if(await ocr(c,label))sheets=true;else if(sheets)all.length=n0;
@@ -1738,7 +1797,8 @@ async function runOCR(files){
     }
     /* the club's own name printed on shirts or the page header is not a player */
     const tw=deacc(imp.team.name).split(/[^a-z]+/).filter(w=>w.length>2);
-    imp.rows=mergeRows(all).filter(r=>r.number!=null||r.position||!r.name||deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1&&tw.some(v=>lev(w,v)<=1)).length*2<deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1).length);
+    imp.rows=mergeRows(all).filter(r=>r.number!=null||r.position||!r.name||deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1&&tw.some(v=>lev(w,v)<=1)).length*2<deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1).length)
+      .concat(sheetRows);
     st.innerHTML=imp.rows.length?"":`<div class="notice">No players found. Try a sharper image, crop to just the list, or paste the names as text.</div>`;
     if(imp.rows.length)renderReview();
   }catch(e){console.error(e);st.innerHTML=`<div class="notice">${why==="engine"?"Couldn't load the text-recognition engine. Check your internet connection, or paste the list as text."
@@ -1748,13 +1808,14 @@ async function runOCR(files){
   finally{if(worker)worker.terminate()}
 }
 const saveCount=()=>imp.rows.filter(r=>r.include&&r.name.trim()).length;
-const saveLabel=()=>imp.match?`Save ${saveCount()} players for this match`:`Add ${saveCount()} players to squad`;
+const saveLabel=()=>imp.match?`Save ${saveCount()} players for this match`:imp.rows.some(r=>r.sheet!=null)?`Save ${saveCount()} rows`:`Add ${saveCount()} players to squad`;
+const findByName=(list,r)=>r.name.trim()?list.find(p=>nameKey(p.name)===nameKey(r.name))||list.find(p=>nameSim(p.name,r.name)>=.75):null;
 function renderReview(){
-  const t=imp.team,existing=playersOf(t.id),mt=imp.match;
-  const byName=r=>r.name.trim()?existing.find(p=>nameKey(p.name)===nameKey(r.name))||existing.find(p=>nameSim(p.name,r.name)>=.75):null;
+  const t=imp.team,existing=playersOf(t.id),mt=imp.match,sheets=imp.sheets||[];
+  const byName=r=>findByName(existing,r);
   /* the same shirt number, or (player sheets often have no number) the same name, is an existing player to update;
      on a match's team sheet numbers change from game to game, so only the name counts */
-  const byNum=r=>mt?byName(r):(r.number!=null&&r.number!==""?existing.find(p=>+p.number===+r.number):null)
+  const byNum=r=>mt||r.sheet!=null?byName(r):(r.number!=null&&r.number!==""?existing.find(p=>+p.number===+r.number):null)
     ||(r.name.trim()?existing.find(p=>nameKey(p.name)===nameKey(r.name)&&!(r.number!=null&&r.number!==""&&p.number!==""&&p.number!=null&&+p.number!==+r.number)):null);
   const box=$("#imp-review");
   const posOpts=v=>`<option value="">—</option>`+POS.map(([k])=>posOption(k,v)).join("");
@@ -1763,17 +1824,26 @@ function renderReview(){
     <div style="min-width:0;flex:1">
       <div class="spread"><h3>${imp.rows.length} rows found. Check and fix before saving</h3><button class="btn sm" id="imp-add">+ Row</button></div>
       <div class="scroll-x"><table class="imp"><thead><tr><th></th><th>No.</th><th>Name</th><th>Position</th><th>Born</th><th>Foot</th><th></th></tr></thead><tbody>
-      ${imp.rows.map((r,i)=>{const ex=byNum(r);return `<tr class="${r.include?"":"off"}">
+      ${imp.rows.map((r,i)=>{const ex=byNum(r),sh=r.sheet!=null&&r.sheet!==imp.rows[i-1]?.sheet?sheets[r.sheet]:null;
+        /* a match sheet's rows come under a header saying which match their shirt numbers are saved to */
+        const head=sh?`<tr><td colspan="7" style="padding-top:14px"><div class="row" style="gap:8px"><b>Match sheet: ${esc(sh.label)}${sh.date?" · "+esc(sh.date):""}</b>
+          <label class="row" style="gap:6px">Numbers go to<select data-sheet-i="${r.sheet}"><option value="">Don't save the numbers</option>
+          ${S.matches.filter(m=>m.homeId===t.id||m.awayId===t.id).sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(m=>`<option value="${esc(m.id)}" ${sh.matchId===m.id?"selected":""}>${esc(matchLabel(m))}</option>`).join("")}
+          ${sh.opp?`<option value="new" ${sh.matchId==="new"?"selected":""}>Create the match: ${esc(sh.home?t.name+" vs "+sh.opp:sh.opp+" vs "+t.name)}${sh.date?" · "+esc(sh.date):""}</option>`:""}</select></label></div></td></tr>`:
+          r.sheet==null&&i===0&&imp.rows.some(x=>x.sheet!=null)?`<tr><td colspan="7"><b>Squad list</b></td></tr>`:"";
+        return head+`<tr class="${r.include?"":"off"}">
         <td><input type="checkbox" data-i="${i}" data-k="include" ${r.include?"checked":""} aria-label="Include"></td>
         <td><input class="n" type="number" min="0" max="99" data-i="${i}" data-k="number" value="${r.number??""}"></td>
         <td><input class="nm" data-i="${i}" data-k="name" value="${esc(r.name)}" dir="auto" placeholder="Name not read, type it in"></td>
         <td><select data-i="${i}" data-k="position">${posOpts(r.position)}</select></td>
         <td><input class="y" type="number" min="1990" max="2022" data-i="${i}" data-k="birthYear" value="${r.birthYear??""}"></td>
         <td><select data-i="${i}" data-k="foot">${["","Right","Left","Both"].map(v=>`<option value="${v}" ${(r.foot||"")===v?"selected":""}>${v||"—"}</option>`).join("")}</select></td>
-        <td>${ex?`<span class="tag upd" title="${esc(ex.name)}">${mt?"In squad: "+esc(ex.name):"Updates "+(ex.number!==""&&ex.number!=null?"#"+esc(ex.number):esc(ex.name))}</span>`:`<span class="tag new">New</span>`}</td></tr>`}).join("")}
+        <td>${ex?`<span class="tag upd" title="${esc(ex.name)}">${mt||r.sheet!=null?"In squad: "+esc(ex.name):"Updates "+(ex.number!==""&&ex.number!=null?"#"+esc(ex.number):esc(ex.name))}</span>`:`<span class="tag new">New</span>`}</td></tr>`}).join("")}
       </tbody></table></div>
-      <div class="row" style="margin-top:10px"><button class="btn primary big" id="imp-save">${saveLabel()}</button><span class="muted">${mt?"Numbers apply to this match only. Fix a name to match the squad if it shows New by mistake.":"A player whose number is already in the squad is updated, not duplicated."}</span></div>
+      <div class="row" style="margin-top:10px"><button class="btn primary big" id="imp-save">${saveLabel()}</button><span class="muted">${mt?"Numbers apply to this match only. Fix a name to match the squad if it shows New by mistake."
+        :sheets.length?"Match-sheet numbers are saved for their match only; the players join the squad without a fixed number.":"A player whose number is already in the squad is updated, not duplicated."}</span></div>
     </div></div>`;
+  $$("[data-sheet-i]",box).forEach(s=>s.onchange=()=>{sheets[+s.dataset.sheetI].matchId=s.value});
   $$("[data-k]",box).forEach(el=>el.onchange=()=>{const r=imp.rows[+el.dataset.i],k=el.dataset.k;
     if(k==="include")r.include=el.checked;else if(k==="number"||k==="birthYear")r[k]=el.value===""?null:+el.value;else r[k]=el.value;
     if(k==="include"||k==="number"||k==="name")renderReview();else{const s=$("#imp-save");s.textContent=saveLabel()}});
@@ -1786,13 +1856,27 @@ function renderReview(){
         else{pl={id:uid(),createdAt:Date.now(),teamId:t.id,name:r.name.trim(),number:"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};S.players.push(pl);existing.push(pl);added++}
         if(r.number!=null&&r.number!=="")nums[pl.id]=+r.number});
       mt.nums=nums;save();imp=null;closeModal();refresh();toast(`Numbers saved for this match${added?`, ${added} new player${added>1?"s":""} added to the squad`:""}`);return}
-    imp.rows.filter(r=>r.include&&r.name.trim()).forEach(r=>{
+    imp.rows.filter(r=>r.include&&r.name.trim()&&r.sheet==null).forEach(r=>{
       const ex=byNum(r);
       const data={name:r.name.trim(),number:r.number??"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};
       if(ex){Object.assign(ex,{name:data.name,number:data.number!==""?data.number:ex.number,position:data.position||ex.position,birthYear:data.birthYear||ex.birthYear,foot:data.foot||ex.foot});updated++}
       else{S.players.push({id:uid(),createdAt:Date.now(),teamId:t.id,...data});added++}
     });
-    save();imp=null;closeModal();refresh();toast(`Added ${added} players${updated?`, updated ${updated}`:""}`);
+    /* match sheets after the squad list, so their players are found among the ones just added */
+    const squad=playersOf(t.id);let filed=0;
+    sheets.forEach((sh,k)=>{const rs=imp.rows.filter(r=>r.include&&r.name.trim()&&r.sheet===k);if(!rs.length)return;
+      let m=sh.matchId&&sh.matchId!=="new"?byId("matches",sh.matchId):null;
+      if(sh.matchId==="new"){let o=findTeam(sh.opp);if(o&&o.id===t.id)o=null;
+        if(!o){o={id:uid(),createdAt:Date.now(),name:sh.opp,country:t.country||"",city:"",ageGroup:"",primary:"#555555",secondary:"#bbbbbb",crestData:null};S.teams.push(o)}
+        m={id:uid(),createdAt:Date.now(),homeId:sh.home?t.id:o.id,awayId:sh.home?o.id:t.id,date:sh.date||"",competition:"",homeScore:sh.score?sh.score[0]:null,awayScore:sh.score?sh.score[1]:null,fileName:"",duration:0,ytId:""};
+        S.matches.push(m);sh.matchId=m.id}
+      const nums={...(m?.nums||{})};
+      rs.forEach(r=>{let pl=findByName(squad,r);
+        if(pl){Object.assign(pl,{position:pl.position||r.position||"",birthYear:pl.birthYear||r.birthYear||null,foot:pl.foot||r.foot||""})}
+        else{pl={id:uid(),createdAt:Date.now(),teamId:t.id,name:r.name.trim(),number:"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};S.players.push(pl);squad.push(pl);added++}
+        if(m&&r.number!=null&&r.number!=="")nums[pl.id]=+r.number});
+      if(m){m.nums=nums;filed++}});
+    save();imp=null;closeModal();refresh();toast([added||!filed?`Added ${added} players`:"",updated?`updated ${updated}`:"",filed?`shirt numbers saved for ${filed} match${filed>1?"es":""}`:""].filter(Boolean).join(", ").replace(/^./,c=>c.toUpperCase()));
   };
 }
 
