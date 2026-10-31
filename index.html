@@ -1422,7 +1422,15 @@ function loadOCR(){
   return ocrLib;
 }
 const POS_WORDS=[[/^(GK|GKP|G|GOALKEEPER|KEEPER|GARDIEN|GB|שוער)$/,"GK"],[/^(RB|RWB|LATERAL\s?DROIT|DD)$/,"RB"],[/^(LB|LWB|DG)$/,"LB"],[/^(CB|DC|DF|DEF|D|DEFENDER|DEFENSEUR|DÉFENSEUR|בלם|מגן)$/,"CB"],
-  [/^(DM|CDM|MDC)$/,"DM"],[/^(CM|MC|MF|MID|M|MIDFIELDER|MILIEU|קשר)$/,"CM"],[/^(AM|CAM|MOC)$/,"AM"],[/^(RW|RM|AD|WINGER|כנף)$/,"RW"],[/^(LW|LM|AG)$/,"LW"],[/^(ST|CF|FW|F|FWD|STRIKER|FORWARD|ATT|ATTAQUANT|BU|AC|חלוץ)$/,"ST"]];
+  [/^(DM|CDM|MDC)$/,"DM"],[/^(CM|MC|MF|MID|M|MIDFIELDER|MILIEU|קשר)$/,"CM"],[/^(AM|CAM|MOC)$/,"AM"],[/^(RW|RWF|RF|RM|AD|WINGER|כנף)$/,"RW"],[/^(LW|LWF|LF|LM|AG)$/,"LW"],[/^(ST|CF|SS|FW|F|FWD|STRIKER|FORWARD|ATT|ATTAQUANT|BU|AC|חלוץ)$/,"ST"]];
+/* "LWF/CF", "CM", "RB / CB": the first short code that names a position */
+const posFromCodes=s=>{for(const w of String(s).toUpperCase().split(/[^A-Zא-ת]+/)){const p=w&&POS_WORDS.find(([re])=>re.test(w));if(p)return p[1]}return ""};
+/* a birth year from "2007", "13.03.2007" or "13.03.07" (two-digit years up to this year are 2000s) */
+function birthYearOf(s){
+  s=String(s||"");const y4=s.match(/\b(19[89]\d|20[0-2]\d)\b/);if(y4)return +y4[1];
+  const d=s.match(/\b\d{1,2}\s*[\/.\-]\s*\d{1,2}\s*[\/.\-]\s*(\d{2})\b/);if(!d)return null;
+  const y=+d[1]+(+d[1]<=new Date().getFullYear()%100?2000:1900);return y>=1990&&y<=2022?y:null;
+}
 const NOISE=/^(NO|N°|NR|NUM|NUMBER|NAME|NAMES|NOM|NOMS|PRENOM|PRÉNOM|PRENOMS|PRÉNOMS|NAISSANCE|REMPLACANTS|REMPLAÇANTS|TITULAIRES|SUBSTITUTES|SURNAME|PLAYER|PLAYERS|JOUEUR|JOUEURS|POS|POSITION|DOB|DATE|BIRTH|YEAR|SQUAD|SQUADS|EFFECTIF|TEAM|LIST|S\/N|SN|שם|מספר|עמדה|שנתון)$/i;
 /* "Jersey No: #16", "Shirt number 7", "N° 10": an explicit shirt-number label, often a few lines under the name on player cards */
 const JERSEY=/\b(jersey|shirt|kit|maillot|dossard|numero|number|num|no|nr|n°)\b[\s.:#°º-]*#?\s*(\d{1,2})\b/i;
@@ -1454,8 +1462,8 @@ function parseSquad(text){
     /* venue, matchday, score and column-header lines of team sheets */
     if((/\b(stade|stadium|journee|matchday|match|feuille|remplacants?|titulaires|substitutes|starting|noms? et prenoms?|date de naissance|date of birth|vs)\b/.test(deacc(line))||/\p{L}\s+\d{1,2}\s*[–—\-:]\s*\d{1,2}\s+\p{L}/u.test(line))&&!/^\s*#?\d{1,2}[\s.)\-]+\p{L}/u.test(line))return;
     let birthYear=null,number=null,position="";
-    const dm=line.match(/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-](19[89]\d|20[0-2]\d)\b/);
-    if(dm){birthYear=+dm[1];line=line.replace(dm[0]," ")}
+    const dm=line.match(/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-](19[89]\d|20[0-2]\d|\d{2})\b/);
+    if(dm&&birthYearOf(dm[0])){birthYear=birthYearOf(dm[0]);line=line.replace(dm[0]," ")}
     else{const ym=line.match(/\b(19[89]\d|20[0-2]\d)\b/);if(ym){birthYear=+ym[1];line=line.replace(ym[0]," ")}}
     const nm=line.match(/(?:^|[\s#(])(\d{1,2})(?=[\s.)\-:,]|$)/);
     if(nm&&+nm[1]<=99){number=+nm[1];line=line.replace(nm[0]," ")}
@@ -1478,8 +1486,9 @@ function parseSquad(text){
   });
   return rows;
 }
-/* one player per page: academy "fiche joueur" / player profile sheets with labelled fields ("Nom et prénom :", "Date of birth:"…),
-   in French or English. Only what the squad keeps is read; place of birth, height, qualities and contact details are skipped */
+/* academy "fiche joueur" / player profile sheets and player cards with labelled fields ("Nom et prénom :", "NAME :", "DOB :"…),
+   in French or English, one or several per page (WhatsApp screenshots stack cards). Only what the squad keeps is read;
+   place of birth, height, qualities and contact details are skipped */
 const PROFILE_LABELS=[
   ["skip",/^(postes? secondaires?|autres? postes?|secondary positions?|other positions?)$/],
   ["name",/^(noms? (et|&) prenoms?|noms? prenoms?|prenoms? (et|&) noms?|nom complet|nom du joueur|full name|player'?s? name|name of (the )?player|name)$/],
@@ -1489,7 +1498,7 @@ const PROFILE_LABELS=[
   ["pos",/^(poste( principal)?|position( principale)?|main position|primary position|playing position|poste occupe)$/],
   ["foot",/^(pied( fort| prefere)?|(strong|stronger|preferred|best) foot|foot|lateralite)$/],
   ["num",/^(numero( de maillot)?|n ?° ?(de )?maillot|dossard|maillot|(jersey|shirt|squad|kit) (number|no|n°)|jersey|shirt)$/],
-  ["skip",/^(lieu de naissance|place of birth|birth ?place|nationalites?|nationality|taille|height|poids|weight|club( actuel)?|current club|categorie|category|age|adresse|address|telephone|tel|phone|e-?mail|ecole|school|parents?|tuteur|guardian|contact|sexe|gender)$/]];
+  ["skip",/^(lieu de naissance|place of birth|birth ?place|nationalites?|nationality|taille|height|hight|heigth|poids|weight|wight|weigth|club( actuel)?|current club|categorie|category|age|adresse|address|telephone|tel|phone|e-?mail|ecole|school|parents?|tuteur|guardian|contact|sexe|gender)$/]];
 function profileLabel(s){const t=deacc(s).replace(/[()]/g,"").replace(/[^a-z0-9°&' ]+/g," ").replace(/\s+/g," ").trim();const l=PROFILE_LABELS.find(([,re])=>re.test(t));return l?l[0]:""}
 function parseProfile(text){
   /* two-column forms put several "Label : value" pairs on one line: a cell that starts with a known label opens a new field */
@@ -1500,16 +1509,24 @@ function parseProfile(text){
   /* a label with nothing after it takes the next line; a bare label without a colon counts only on a line of its own (not a table header) */
   const lab=c=>{const m=c.t.match(/^([^:：]{2,40}?)\s*[:：]\s*(.*)$/);if(m){const k=profileLabel(m[1]);if(k)return [k,m[2].trim(),m[1]]}
     return c.whole&&profileLabel(c.t)?[profileLabel(c.t),"",c.t]:null};
-  const f={};let lastFr=false;
+  /* a field that comes round again starts the next player; so does a name after fields without one
+     (the bottom of a card cut off at the top of a screenshot) */
+  const recs=[];let f={},lastFr=false;
+  const naming=k=>k==="name"||k==="last"||k==="first";
   for(let i=0;i<cells.length;i++){const l=lab(cells[i]);if(!l)continue;let [k,v,raw]=l;
     if(!v&&cells[i+1]&&!lab(cells[i+1]))v=cells[++i].t;
-    if(v&&k!=="skip"&&f[k]==null){f[k]=v;if(k==="last")lastFr=/^nom/i.test(deacc(raw))}}
-  const name=cleanName(f.name||(f.last&&f.first?(lastFr?f.last+" "+f.first:f.first+" "+f.last):f.last||f.first||""));
-  const yr=(f.dob||"").match(/\b(19[89]\d|20[0-2]\d)\b/),position=f.pos?posFromPhrase(f.pos):"",ft=deacc(f.foot||"");
-  const foot=/ambi|both|deux|2 pieds/.test(ft)?"Both":/gauche|left|^g$|^l$/.test(ft)?"Left":/droit|right|^d$|^r$/.test(ft)?"Right":"";
-  const nm=(f.num||"").match(/\b(\d{1,2})\b/);
-  if(name.replace(/[^\p{L}]/gu,"").length<3||!(yr||position||foot))return null;
-  return {include:true,number:nm?+nm[1]:null,name,position,birthYear:yr?+yr[1]:null,foot};
+    if(!v||k==="skip")continue;
+    if(f[k]!=null||naming(k)&&!f.name&&!f.last&&!f.first&&Object.keys(f).length){recs.push([f,lastFr]);f={};lastFr=false}
+    f[k]=v;if(k==="last")lastFr=/^nom/i.test(deacc(raw))}
+  recs.push([f,lastFr]);
+  const rows=recs.map(([f,lastFr])=>{
+    const name=cleanName(f.name||(f.last&&f.first?(lastFr?f.last+" "+f.first:f.first+" "+f.last):f.last||f.first||""));
+    const yr=birthYearOf(f.dob),position=f.pos?posFromPhrase(f.pos)||posFromCodes(f.pos):"",ft=deacc(f.foot||"");
+    const foot=/ambi|both|deux|2 pieds/.test(ft)?"Both":/gauche|left|^g$|^l$/.test(ft)?"Left":/droit|right|^d$|^r$/.test(ft)?"Right":"";
+    const nm=(f.num||"").match(/\b(\d{1,2})\b/);
+    if(name.replace(/[^\p{L}]/gu,"").length<3||!(yr||position||foot))return null;
+    return {include:true,number:nm?+nm[1]:null,name,position,birthYear:yr,foot}}).filter(Boolean);
+  return rows.length?rows:null;
 }
 /* match sheets ("feuille de match", team sheet): line-ups side by side under a "HOME 1 – 1 AWAY" or "HOME vs AWAY" header, one row per
    shirt number + name (+ date of birth). Only the club's own column is kept, with the opponent and date so the numbers go to that match */
@@ -1699,7 +1716,7 @@ function openImport(team,match=null){
   drop.addEventListener("dragover",e=>{e.preventDefault();drop.classList.add("over")});
   drop.addEventListener("dragleave",()=>drop.classList.remove("over"));
   drop.addEventListener("drop",e=>{e.preventDefault();drop.classList.remove("over");const fs=[...e.dataTransfer.files].filter(f=>f.type.startsWith("image/")||isPDF(f));if(fs.length)runOCR(fs)});
-  $("#imp-parse").onclick=()=>{const prof=parseProfile($("#imp-text").value),rows=prof?[prof]:parseSquad($("#imp-text").value);if(!rows.length){toast("No players found in the text");return}imp.rows=rows;renderReview()};
+  $("#imp-parse").onclick=()=>{const rows=parseProfile($("#imp-text").value)||parseSquad($("#imp-text").value);if(!rows.length){toast("No players found in the text");return}imp.rows=rows;renderReview()};
 }
 /* PDF squad lists: most are exported from a website or Word and carry real text, which is read exactly with its layout;
    scanned PDFs have only page images, which go through text recognition like a photo */
@@ -1760,7 +1777,7 @@ async function runOCR(files){
   async function ocr(canvas,label){
     const w=await getWorker();say(`${label}: reading text…`);
     const data=(await w.recognize(canvas,{},{text:true,tsv:true})).data,prof=parseProfile(data.text);
-    if(prof){all.push(prof);return true}
+    if(prof){all.push(...prof);return true}
     const sh=parseMatchSheet(ocrWords(data),data.text,imp.team);if(sh){addSheet(sh);return true}
     const res=parseOCR(data);
     all.push(...res.rows);
@@ -1788,7 +1805,7 @@ async function runOCR(files){
         imp.images.push(await canvasURL(await pdfCanvas(page,Math.min(1.5,900/w1))));
         const {words,text}=await pdfWords(page,2);
         if(words.reduce((a,w)=>a+w.text.replace(/[^\p{L}]/gu,"").length,0)>=20){const prof=parseProfile(text),sh=!prof&&parseMatchSheet(words,text,imp.team);
-          if(prof){all.push(prof);sheets=true}else if(sh){addSheet(sh);sheets=true}else if(!sheets)all.push(...parseLayout(words,text).rows);continue}
+          if(prof){all.push(...prof);sheets=true}else if(sh){addSheet(sh);sheets=true}else if(!sheets)all.push(...parseLayout(words,text).rows);continue}
         const c=await pdfCanvas(page,Math.min(4,2600/w1));
         const g=c.getContext("2d");g.filter="grayscale(1)";g.drawImage(c,0,0);
         const n0=all.length;if(await ocr(c,label))sheets=true;else if(sheets)all.length=n0;
