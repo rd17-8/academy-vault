@@ -200,6 +200,12 @@ section.stack{gap:12px}
 .stars button{font:inherit;font-size:1.2rem;background:none;border:0;cursor:pointer;color:var(--line);padding:0 2px}
 .stars button.on{color:var(--accent)}
 .rating{color:var(--accent);letter-spacing:1px}
+/* player quick view: opens beside the match video, no backdrop, so the match keeps playing */
+.qv{position:fixed;top:0;bottom:0;inset-inline-end:0;width:min(380px,100%);z-index:35;background:var(--surface);border-inline-start:1px solid var(--line);box-shadow:0 0 40px rgba(0,0,0,.28);overflow:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+@media (max-width:700px){.qv{top:auto;width:100%;max-height:60vh;border-inline-start:0;border-top:1px solid var(--line);border-radius:14px 14px 0 0}}
+.qv .x{margin-inline-start:auto;flex:none}
+.qv .facts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center}
+.qv .facts select,.qv .facts input{padding:5px 8px}
 /* reel preview */
 .overlay{position:absolute;inset:auto 0 0 0;padding:12px 14px;display:flex;gap:10px;align-items:center;background:linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,0));color:#fff;pointer-events:none}
 .overlay .who{display:flex;flex-direction:column;line-height:1.2}
@@ -961,6 +967,48 @@ const Team={
 };
 
 /* ---------- view: match room ---------- */
+/* where each match was left, so coming back from a profile picks up at the same minute */
+const POSKEY="gemball-match-pos";let lastPos={},backTo=null;
+try{lastPos=JSON.parse(localStorage.getItem(POSKEY)||"{}")||{}}catch(e){}
+function keepPos(id,t){if(!id||!(t>3))return;lastPos[id]=+t.toFixed(1);try{localStorage.setItem(POSKEY,JSON.stringify(lastPos))}catch(e){}}
+window.addEventListener("pagehide",()=>{if(current===Match&&Match.v)keepPos(Match._mid,Match.v.currentTime)});
+
+/* player quick view: details, this match's clips and scouting notes beside the video, without leaving the match */
+let qvId=null,qvSave=null;
+function closeQV(){qvId=null;const q=$("#qv");if(q)q.remove()}
+function openQV(pid){
+  const pl=byId("players",pid),m=Match.match();if(!pl||!m){closeQV();return}
+  qvId=pid;const t=byId("teams",pl.teamId);
+  const cs=S.clips.filter(c=>c.playerId===pl.id),here=cs.filter(c=>c.matchId===m.id).sort((x,y)=>x.start-y.start);
+  const others=[...new Set(cs.filter(c=>c.matchId!==m.id).map(c=>c.matchId))].map(id=>byId("matches",id)).filter(Boolean);
+  let q=$("#qv");if(!q){q=document.createElement("aside");q.id="qv";q.className="qv";q.setAttribute("aria-label","Player details");document.body.appendChild(q)}
+  const sq=pl.number!=null&&pl.number!==""&&String(pl.number)!==String(shirtNo(pl,m));
+  q.innerHTML=`<div class="row" style="flex-wrap:nowrap;align-items:flex-start">${kit(t,shirtNo(pl,m))}<div style="min-width:0"><b style="font-size:1.15rem;overflow-wrap:anywhere">${esc(pl.name)}</b><div class="muted row" style="flex-wrap:nowrap">${crest(t,"sm")}<span>${esc(t?.name||"")}</span></div></div><button class="btn ghost sm x" id="qv-x" aria-label="Close">✕ <span class="kbd">Esc</span></button></div>
+    <div class="facts">
+      <span class="muted">Position</span><select id="qv-pos"><option value="">Not set</option>${POS.map(([k,l])=>`<option value="${k}" ${pl.position===k?"selected":""}>${esc(l)}</option>`).join("")}</select>
+      <span class="muted">Born</span><input id="qv-by" type="number" min="1990" max="2025" value="${esc(pl.birthYear||"")}" placeholder="Year">
+      <span class="muted">Foot</span><select id="qv-foot"><option value="">Not set</option>${["Right","Left","Both"].map(f=>`<option ${footL(pl.foot)===f?"selected":""}>${f}</option>`).join("")}</select>
+      ${sq?`<span class="muted">Squad no.</span><span class="num">${esc(pl.number)}</span>`:""}
+    </div>
+    <label class="f">Scouting notes<textarea id="qv-note" rows="4" placeholder="Strengths, weaknesses, moments to come back to">${esc(pl.scoutNote||"")}</textarea></label>
+    <div class="stack" style="gap:6px"><div class="spread"><b>In this match</b><span class="muted num">${here.length} clip${here.length===1?"":"s"}</span></div>
+      <div class="list">${here.map(c=>`<div class="item"><div class="grow"><b>${esc(c.action||"Clip")}</b> ${stars(c.rating)}<div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩${c.note?" · "+esc(c.note):""}</div></div><button class="btn sm" data-qvp="${esc(c.id)}" title="Play this clip">▶</button></div>`).join("")||`<p class="muted" style="margin:0">No clips of this player in this match yet.</p>`}</div></div>
+    ${others.length?`<div class="stack" style="gap:4px"><b>Clips in other matches</b><span class="muted">${others.map(o=>esc(matchLabel(o))).join("<br>")}</span><span class="muted num">${cs.length} clips in all</span></div>`:""}
+    <div class="stack" style="gap:4px"><a class="btn sm" href="#/player/${esc(pl.id)}" style="align-self:flex-start">Full profile and reel</a><span class="muted" style="font-size:.8rem">If you open it, the match picks up at the same minute when you come back.</span></div>`;
+  $("#qv-x").onclick=closeQV;
+  const set=data=>{Object.assign(pl,data);save();Match.redrawLists()};
+  $("#qv-pos").onchange=e=>set({position:e.target.value});
+  $("#qv-by").onchange=e=>set({birthYear:+e.target.value||null});
+  $("#qv-foot").onchange=e=>set({foot:e.target.value});
+  $("#qv-note").oninput=e=>{pl.scoutNote=e.target.value;clearTimeout(qvSave);qvSave=setTimeout(save,400)};
+  $$("[data-qvp]",q).forEach(b=>b.onclick=()=>{const c=byId("clips",b.dataset.qvp);if(!Match.v){toast("Attach the video file first");return}Match.preview(c.start,c.end)});
+}
+/* player names in the match room open the quick view; ctrl/cmd-click still opens the profile */
+document.addEventListener("click",e=>{
+  if(current!==Match||e.ctrlKey||e.metaKey||e.shiftKey||e.button)return;
+  const a=e.target.closest&&e.target.closest('#root a[href^="#/player/"]');if(!a)return;
+  e.preventDefault();openQV(decodeURIComponent(a.getAttribute("href").slice(9)));
+});
 let tagState=null;
 const recording=()=>!!(tagState&&tagState.recording);
 const recLabel=()=>recording()?`■ Stop recording <span class="kbd">R</span>`:`<i class="dot"></i> Record <span class="kbd">R</span>`;
@@ -984,11 +1032,16 @@ const Match={
     $("#del-match").onclick=e=>armDelete(e.currentTarget,()=>{const m=this.match();const h=m?.homeId;del("matches",route.id);nav(h?"team":"",h)});
     this.src=null;
     $("#tl").onclick=e=>{if(!this.v||!this.v.duration)return;const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;this.v.currentTime=x*this.v.duration};
-    this._key=null;this.v=null;
+    this._key=null;this.v=null;this._backDone=false;
     clearInterval(this._clock);
     this._clock=setInterval(()=>this.tick(),200);
   },
-  unmount(){clearInterval(this._clock);clearInterval(this._prev);if(this.v&&this.v.isYT)this.v.destroy();this.v=null;this.src=null},
+  unmount(){closeQV();clearInterval(this._clock);clearInterval(this._prev);
+    /* route already points where we are going: offer the way back only on a player profile */
+    backTo=null;if(this.v){const t=this.v.currentTime;keepPos(this._mid,t);if(t>3&&route.view==="player")backTo={id:this._mid,t}}
+    if(this.v&&this.v.isYT)this.v.destroy();this.v=null;this.src=null},
+  redrawLists(){const m=this.match();if(!m)return;const h=byId("teams",m.homeId),a=byId("teams",m.awayId);
+    this.renderSquads(m,h,a);this.renderClips(m);if(!recording())this.renderTagPanel(m,h,a)},
   match(){return byId("matches",route.id)},
   tick(){
     const v=this.v;if(!v)return;
@@ -1022,7 +1075,7 @@ const Match={
   update(){
     const m=this.match();
     if(!m){crumbs([["Not found",null]]);$("#root").innerHTML=`<div class="panel"><h3>Match not found</h3><a class="btn" href="#/">Back</a></div>`;return}
-    const h=byId("teams",m.homeId),a=byId("teams",m.awayId);
+    const h=byId("teams",m.homeId),a=byId("teams",m.awayId);this._mid=m.id;
     crumbs([[`${flag(h?.country,"sm")} ${esc(CN[h?.country]||"")}`,h?.country?"#/country/"+h.country:null],[esc(h?.name||"?"),h?"#/team/"+h.id:null],[esc(matchLabel(m)),null]]);
     $("#m-head").innerHTML=`<div class="panel"><div class="vs"><a class="side" href="#/team/${esc(h?.id)}" style="color:inherit;text-decoration:none">${crest(h,"lg")}<b>${esc(h?.name)}</b><span class="muted">${flag(h?.country,"sm")} ${esc(CN[h?.country]||"")}</span></a>
       <div style="text-align:center;display:flex;flex-direction:column;gap:2px;align-items:center">${scoreHtml(m)}<span class="muted num">${esc(m.date||"")}</span><span class="muted">${esc(m.competition||"")}</span>${m.example?'<span class="ex">Example</span>':""}</div>
@@ -1034,6 +1087,7 @@ const Match={
     this.renderTagPanel(m,h,a);
     this.renderClips(m);
     this.renderSquads(m,h,a);
+    if(qvId)openQV(qvId);
   },
   renderSquads(m,h,a){
     $("#squads").innerHTML=[h,a].map(t=>`<div class="col"><div class="spread">${t?`<span class="row">${crest(t,"sm")}<b>${esc(t.name)}</b></span><button class="btn sm" data-sheet="${esc(t.id)}">Scan team sheet</button>`:""}</div>
@@ -1068,7 +1122,10 @@ const Match={
       const ey=$("#b-edityt");if(ey)ey.onclick=()=>askYT(m);
       this.syncRec();
     };
-    const resume=this._resume;this._resume=null;
+    /* the first video of this visit starts where the match was left last time */
+    const back=this._resume==null&&!this._backDone&&lastPos[m.id]?lastPos[m.id]:null;
+    const resume=this._resume??back;this._resume=null;
+    if(back&&(videoMap[m.id]||m.ytId)){this._backDone=true;toast("Picking up where you left off: "+fmt(back))}
     if(this.src==="file"&&videoMap[m.id]){
       box.innerHTML=`<video id="vid" controls playsinline preload="auto" src="${videoMap[m.id]}"></video>`;
       this.v=$("#vid");
@@ -1202,6 +1259,7 @@ const Match={
   }
 };
 document.addEventListener("keydown",e=>{
+  if(current===Match&&e.code==="Escape"&&$("#qv")&&!$("#modal-root .modal")){closeQV();e.preventDefault();return}
   if(current!==Match||!Match.v)return;
   if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.ctrlKey||e.metaKey||e.altKey)return;
   const v=Match.v;
@@ -1227,7 +1285,7 @@ function reelList(pl){
 }
 const Player={
   mount(root){root.innerHTML=`<div id="p-head"></div><div class="panel" id="p-reel"></div>`},
-  unmount(){stopReel()},
+  unmount(){stopReel();backTo=null},
   update(){
     const pl=byId("players",route.id);
     if(!pl){crumbs([["Not found",null]]);$("#root").innerHTML=`<div class="panel"><h3>Player not found</h3><a class="btn" href="#/">Back</a></div>`;return}
@@ -1237,8 +1295,10 @@ const Player={
     const inc=cs.filter(c=>!c.excluded);
     const byAct={};cs.forEach(c=>{const k=c.action||"Untagged";byAct[k]=(byAct[k]||0)+1});
     const dur=inc.reduce((s,c)=>s+(c.end-c.start),0);
-    $("#p-head").innerHTML=`<div class="panel"><div class="hero">${crest(t,"lg")}${kit(t,pl.number)}<div class="meta"><div class="eyebrow">${flag(t?.country,"sm")} ${esc(CN[t?.country]||"")} · <a href="#/team/${esc(t?.id)}">${esc(t?.name||"")}</a></div><h1>${esc(pl.name)}</h1>
-      <div class="muted">${esc(POSL[pl.position]||"Position not set")}${pl.birthYear?" · Born "+esc(pl.birthYear):""}${pl.foot?" · "+esc(footL(pl.foot))+" foot":""}</div></div>
+    const bm=backTo&&byId("matches",backTo.id);
+    $("#p-head").innerHTML=`${bm?`<div style="margin-bottom:12px"><a class="btn primary" href="#/match/${esc(bm.id)}">← Back to ${esc(matchLabel(bm))} at ${fmt(backTo.t)}</a></div>`:""}<div class="panel"><div class="hero">${crest(t,"lg")}${kit(t,pl.number)}<div class="meta"><div class="eyebrow">${flag(t?.country,"sm")} ${esc(CN[t?.country]||"")} · <a href="#/team/${esc(t?.id)}">${esc(t?.name||"")}</a></div><h1>${esc(pl.name)}</h1>
+      <div class="muted">${esc(POSL[pl.position]||"Position not set")}${pl.birthYear?" · Born "+esc(pl.birthYear):""}${pl.foot?" · "+esc(footL(pl.foot))+" foot":""}</div>
+      ${pl.scoutNote?`<p style="margin:4px 0 0;white-space:pre-wrap">${esc(pl.scoutNote)}</p>`:""}</div>
       <div class="stats"><div class="stat"><span class="v num">${cs.length}</span><span class="l">Clips</span></div><div class="stat"><span class="v num">${new Set(cs.map(c=>c.matchId)).size}</span><span class="l">Matches</span></div><div class="stat"><span class="v num">${fmt(dur)}</span><span class="l">Reel length</span></div></div></div>
       ${cs.length?`<div class="row">${Object.entries(byAct).map(([k,v])=>`<span class="chip static">${esc(k)} <b class="num">${v}</b></span>`).join("")}</div>`:""}</div>`;
     if(reel&&reel.pid===pl.id)return;
