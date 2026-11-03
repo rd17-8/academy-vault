@@ -250,15 +250,51 @@ table.imp tr.off td{opacity:.45}
 .toast{position:fixed;inset-inline:0;bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;pointer-events:none;z-index:50}
 .toast span{background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:999px;font-weight:600}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+/* sign-in, device approval and the owner's accounts panel */
+body.locked>*:not(#gate):not(#toast):not(#modal-root){display:none!important}
+#gate{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:24px 16px;background:radial-gradient(60vw 60vw at 85% -10%,rgba(200,244,60,.12),transparent 60%),var(--bg)}
+.gate-card{width:min(420px,100%);display:flex;flex-direction:column;gap:14px}
+.gate-card h1{font-size:2rem}
+.gate-card p{margin:0}
+.gate-logo{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.gate-logo svg{width:34px;height:34px}
+.gate-logo b{font-family:var(--f-display);font-weight:700;letter-spacing:.18em;font-size:1.3rem}
+.gate-form{display:flex;flex-direction:column;gap:12px;margin-top:6px}
+.gate-form input{width:100%;font-size:1rem;padding:11px 12px}
+.gate-form .btn{justify-content:center;padding:11px 16px}
+.gate-dev{display:flex;flex-direction:column;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.gate-dev .num{font-size:1.1rem;color:var(--ink)}
+.small{font-size:.85rem}
+.wsbar{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.wsbar .wrap{display:flex;align-items:center;gap:12px;justify-content:space-between;padding-block:8px;flex-wrap:wrap}
+.wsbar .btn{background:var(--accent-ink);color:var(--accent);border-color:var(--accent-ink)}
+.nbadge{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:500 .72rem var(--f-num);margin-inline-start:6px;vertical-align:middle}
+.chip-s{display:inline-block;font-size:.72rem;font-weight:600;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--muted);margin-inline-start:4px}
+.chip-s.ok{border-color:var(--accent);color:var(--link)}
+.modal .panel.wide{width:min(900px,100%)}
+.adm-sec{display:flex;flex-direction:column;gap:8px;padding-top:14px;border-top:1px solid var(--line)}
+.adm-sec:first-child{border-top:0;padding-top:0}
+.adm-sec h3{margin:0}
+.acct{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.acct.off{opacity:.6}
+.acct .item:first-child{border-top:0}
+.invite{background:var(--sunk);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.invite pre{margin:0;white-space:pre-wrap;font:inherit;font-size:.9rem}
+.sync{font-size:.78rem;color:var(--muted);align-self:center}
+.sync[data-s="error"]{color:var(--danger)}
 </style>
 </head>
-<body>
+<body class="locked">
+<div id="gate"></div>
+<div class="wsbar" id="ws-bar" hidden></div>
 <header class="topbar"><div class="wrap">
   <a class="logo" href="#/" aria-label="GEMBALL home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8.2 5.2H23.8L29.8 12.4 16 28.6 2.2 12.4Z" fill="#c8f43c" fill-opacity=".22" stroke="#c8f43c" stroke-width="2.6" stroke-linejoin="round"/><path d="M2.2 12.4H29.8M11.8 12.4 16 5.2 20.2 12.4 16 28.6 11.8 12.4" fill="none" stroke="#c8f43c" stroke-width="1.6" stroke-linejoin="round"/></svg><span><b>GEMBALL</b><small>Where football's gems are found</small></span></a>
   <div class="search"><input id="q" type="search" placeholder="Search players or teams" autocomplete="off" aria-label="Search"><div class="results" id="q-results" hidden></div></div>
   <nav class="navlinks">
     <a href="#/" id="nav-home">Countries</a>
     <a href="#/highlights" id="nav-hl">Highlights</a>
+    <span class="sync" id="sync"></span>
+    <button type="button" id="nav-admin" hidden>Accounts<span class="nbadge" id="nav-admin-n" hidden></span></button>
     <button type="button" id="nav-settings">Settings</button>
   </nav>
 </div></header>
@@ -376,12 +412,43 @@ function askYT(m){
 function download(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}
 const safeName=s=>String(s||"").replace(/[\\/:*?"<>|]+/g,"").trim()||"highlights";
 
-/* ---------- store ---------- */
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Saving in this browser failed. Export a backup so you don't lose data")}}
-function load(){
-  try{const raw=localStorage.getItem(KEY);if(raw){Object.assign(S,JSON.parse(raw));S.settings=S.settings||{brand:"",contact:""};return}}catch(e){}
-  try{const old=localStorage.getItem("academy-vault-v2");if(old){migrate(JSON.parse(old));save();return}}catch(e){}
-  save(); /* a new browser starts with an empty platform; no example academies */
+/* ---------- store ----------
+   The data lives in the signed-in person's own space in the GEMBALL cloud, not in this browser: save() sends the whole
+   space a moment after the last change, and the server refuses a save made on top of a version it no longer has */
+/* a local copy of the server can stand in while testing on this computer */
+const API=(location.hostname==="localhost"&&localStorage.getItem("gemball-api"))||"https://gemball-cloud.gemball-cloud.workers.dev",SESSION_KEY="gemball-session";
+let session=null;try{session=JSON.parse(localStorage.getItem(SESSION_KEY)||"null")}catch(e){}
+let WS=null,wsName="",dataVer=null,saveTimer=null,saving=false,dirty=false;
+const isAdmin=()=>session?.user?.role==="admin";
+/* the space that is open: the owner's own ("main"), a client's that the owner opened, or the client's own */
+const curWS=()=>WS||(isAdmin()?"main":session?.user?.username||"");
+function syncState(s){const el=$("#sync");if(el){el.dataset.s=s;el.textContent=s==="error"?"Not saved yet, retrying…":s==="saving"?"Saving…":"Saved"}}
+function save(){if(!session)return;dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(flush,600);syncState("saving")}
+async function flush(){
+  clearTimeout(saveTimer);if(saving||!dirty||!session)return;
+  saving=true;dirty=false;let retry=600;
+  try{const r=await api("/data",{method:"PUT",body:{ver:dataVer,data:S}});dataVer=r.ver;if(!dirty)syncState("saved")}
+  catch(e){
+    if(e.status===409){toast("This space was changed on another device. Showing the latest version");try{await loadData();linkCloud();refresh(true)}catch(x){}}
+    else if(session){dirty=true;retry=5000;syncState("error")}
+  }finally{saving=false;if(dirty&&session)saveTimer=setTimeout(flush,retry)}
+}
+const settled=async()=>{await flush();while(saving)await new Promise(r=>setTimeout(r,150))};
+async function loadData(){
+  const r=await api("/data"),d=r.data||{};
+  dataVer=r.ver;
+  S.teams=d.teams||[];S.players=d.players||[];S.matches=d.matches||[];S.clips=d.clips||[];S.settings=d.settings||{brand:"",contact:""};
+}
+/* data kept in this browser before accounts existed moves into the owner's space once; a copy stays put aside here */
+function moveLocalData(){
+  if(!isAdmin()||curWS()!=="main")return;
+  let d=null;try{d=JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){}
+  if(!d)return;
+  const n=mergeData({teams:d.teams||[],players:d.players||[],matches:d.matches||[],clips:d.clips||[],settings:d.settings});
+  try{localStorage.setItem(KEY+"-before-cloud",JSON.stringify(d))}catch(e){}
+  try{localStorage.removeItem(KEY)}catch(e){}
+  save();
+  if(n.teams+n.players+n.matches+n.clips)toast(`Moved ${n.players} players, ${n.matches} matches and ${n.clips} clips from this browser into your space`);
 }
 function migrate(o){
   const byName=Object.fromEntries(COUNTRIES.map(c=>[c[1],c[0]]));
@@ -495,22 +562,28 @@ async function reconnect(m){
 }
 
 /* ---------- cloud storage: match videos copied from a WeTransfer / SwissTransfer link into the user's own bucket ----------
-   The connection code (server address + secret key) is kept apart from the data, so backups never carry the key.
-   A cloud video stands in for an attached file: matches play, reels play and export from it on any device. */
+   Each space has its own videos; a client never sees another space's. A cloud video stands in for an attached file: matches play, reels play and export from it on any device. */
 const CLOUD_KEY="gemball-cloud",JOBS_KEY="gemball-cloud-jobs";
-function cloudCfg(){try{const c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");return c&&c.url&&c.key?c:null}catch(e){return null}}
-function parseCloudCode(s){const m=String(s||"").trim().match(/^(https:\/\/[^\s#]+?)\/?#([a-f0-9]{32,})$/i);return m?{url:m[1],key:m[2]}:null}
-const cloudSrc=m=>{const c=cloudCfg();return c&&m?.cloud?.name?`${c.url}/v/${encodeURIComponent(m.cloud.name)}?k=${c.key}`:null};
+/* signing in is what connects the cloud: videos go to, and play from, the space that is open */
+function cloudCfg(){return session?{url:API,key:session.token}:null}
+function parseCloudCode(s){const m=String(s||"").trim().match(/^(https?:\/\/[^\s#]+?)\/?#([a-f0-9]{32,})$/i);return m?{url:m[1],key:m[2]}:null}
+const cloudSrc=m=>session&&m?.cloud?.name?`${API}/v/${encodeURIComponent(m.cloud.name)}?k=${encodeURIComponent(session.token)}&ws=${encodeURIComponent(curWS())}`:null;
 const isCloud=src=>/^https?:/.test(src||"");
 /* matches with a cloud copy play from it unless a file from this computer is attached */
 function linkCloud(){S.matches.forEach(m=>{const s=cloudSrc(m);if(s&&!(videoMap[m.id]&&!isCloud(videoMap[m.id])))videoMap[m.id]=s})}
-async function cloudApi(path,body){
-  const c=cloudCfg();if(!c)throw new Error("Cloud storage isn't connected");
-  const r=await fetch(c.url+path,body?{method:"POST",headers:{"content-type":"application/json","x-key":c.key},body:JSON.stringify(body)}:{headers:{"x-key":c.key}});
+/* every call carries the session and the open space; a session the server no longer accepts (device switched off,
+   account switched off, expired) signs this device out */
+async function api(path,{method="GET",body,ws}={}){
+  if(!session)throw new Error("Please sign in");
+  let r;
+  try{r=await fetch(API+path,{method,headers:{...(body?{"content-type":"application/json"}:{}),"x-key":session.token,"x-ws":ws||curWS()},body:body?JSON.stringify(body):undefined})}
+  catch(e){const x=new Error("No connection to the GEMBALL cloud");x.status=0;throw x}
   const j=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(r.status===401?"The cloud key is wrong. Check the connection code in Settings":j.error||"The cloud server didn't answer");
+  if(r.status===401){signOut("expired");const x=new Error("Please sign in again");x.status=401;throw x}
+  if(!r.ok){const x=new Error(j.error||"The GEMBALL cloud didn't answer");x.status=r.status;x.data=j;throw x}
   return j;
 }
+const cloudApi=(path,body)=>api(path,body?{method:"POST",body}:{});
 const gb=n=>(n/2**30).toFixed(n<2**30?2:1)+" GB";
 const loadJobs=()=>{try{return JSON.parse(localStorage.getItem(JOBS_KEY)||"{}")||{}}catch(e){return {}}};
 const saveJobs=j=>{try{localStorage.setItem(JOBS_KEY,JSON.stringify(j))}catch(e){}};
@@ -962,7 +1035,7 @@ const Home={
         const pc=S.players.filter(p=>ids.has(p.teamId)).length,mc=S.matches.filter(m=>ids.has(m.homeId)||ids.has(m.awayId)).length;
         return `<a class="mycountry" href="#/country/${c[0]}"><span class="wash" style="background-image:url(${flagSrc(c[0])})"></span>${flag(c[0])}<span style="min-width:0;position:relative"><b>${esc(c[1])}</b>
           <span class="mini"><span><b>${ts.length}</b> academies</span><span><b>${pc}</b> players</span><span><b>${mc}</b> matches</span></span></span></a>`}).join("")}</div>`
-      :`<div class="panel"><h3>No academies in this browser yet</h3><p class="muted" style="margin:0">Your data is saved in the browser you entered it in. Using a new browser or device? Export a backup there and load it here with <b>Settings → Restore backup</b>. It adds to what is here and never deletes anything. Starting fresh? Pick a country below or click "New academy".</p></div>`;
+      :`<div class="panel"><h3>No academies in this space yet</h3><p class="muted" style="margin:0">Everything you add is saved in your private space and opens on every device you're approved on. Have a backup file? Load it with <b>Settings → Restore backup</b>. Starting fresh? Pick a country below or click "New academy".</p></div>`;
     const tabs=CONTINENTS;
     if(!tabs.some(([k])=>k===homeTab))homeTab="af";
     $("#home-tabs").innerHTML=tabs.map(([k,l])=>`<button role="tab" data-k="${k}" aria-selected="${homeTab===k}">${l}</button>`).join("");
@@ -2213,41 +2286,277 @@ $("#nav-settings").onclick=()=>{
     <label class="f">Contact details<input id="s-contact" value="${esc(S.settings.contact)}" placeholder="Phone / WhatsApp / email"></label>
     <div class="row"><button class="btn primary" id="s-save">Save</button></div>
     <hr style="border:0;border-top:1px solid var(--line);width:100%">
-    <h3>Backup & moving between devices</h3>
-    <p class="muted" style="margin:0">All data (teams, players, matches and clips) is stored in this browser. Video files themselves aren't included in the backup.</p>
+    <h3>Your account</h3>
+    <p class="muted" style="margin:0">Signed in as <b>${esc(session?.user?.name||"")}</b> (${esc(session?.user?.username||"")})${WS?`, with <b>${esc(wsName)}</b>'s space open`:""}.</p>
+    <div class="row">${isAdmin()?`<button class="btn" id="s-admin">Accounts & devices</button>`:""}<button class="btn ghost danger" id="s-out">Sign out of this device</button></div>
+    <hr style="border:0;border-top:1px solid var(--line);width:100%">
+    <h3>Backup</h3>
+    <p class="muted" style="margin:0">Everything (teams, players, matches and clips) is saved in your private GEMBALL space and opens on every device you're approved on. A backup file is an extra copy to keep. Video files aren't included.</p>
     <div class="row"><button class="btn" id="s-export">Export backup</button><label class="btn" for="s-import">Restore backup</label><input type="file" id="s-import" accept="application/json,.json" hidden>${hasUndo()?`<button class="btn ghost" id="s-undo">Undo last restore</button>`:""}</div>
     <p class="muted" style="margin:0;font-size:.85rem">Restoring adds the backup to what is already here. Nothing is deleted.</p>
     <hr style="border:0;border-top:1px solid var(--line);width:100%">
-    <h3>Cloud storage for match videos</h3>
-    <p class="muted" style="margin:0">Copy match videos from WeTransfer or SwissTransfer links into your own cloud storage, so they play on any device without downloading. Paste your connection code once on each device. It isn't included in backups.</p>
-    <label class="f">Connection code<input id="s-cloud" type="password" dir="ltr" autocomplete="off" value="${esc(cloudCfg()?cloudCfg().url+"#"+cloudCfg().key:"")}" placeholder="https://….workers.dev#…"></label>
-    <div class="row"><button class="btn" id="s-cloud-save">${cloudCfg()?"Update":"Connect"}</button>${cloudCfg()?`<button class="btn ghost danger" id="s-cloud-off">Disconnect this device</button>`:""}</div>
+    <h3>Match videos in the cloud</h3>
+    <p class="muted" style="margin:0">Videos copied from WeTransfer or SwissTransfer links into this space. They play on every approved device without downloading.</p>
     <div id="s-cloud-list"></div>`);
   const su=$("#s-undo");if(su)su.onclick=e=>armDelete(e.currentTarget,undoRestore);
   const cloudList=async()=>{const box=$("#s-cloud-list");if(!box||!cloudCfg())return;box.innerHTML=`<p class="muted">Checking the cloud…</p>`;
     try{const r=await cloudApi("/list");
       box.innerHTML=`<p style="margin:0"><b>${gb(r.used)}</b> <span class="muted">used${r.used<10*2**30?` of the 10 GB free`:` (10 GB are free, the rest is billed by Cloudflare)`}</span></p>
         <div class="list">${r.objects.map(o=>{const m=S.matches.find(x=>x.cloud?.name===o.name);return `<div class="item"><div class="grow"><b>${esc(m?matchLabel(m):"Not linked to a match")}</b><div class="muted">${gb(o.size)}${o.source?" · from "+esc(o.source):""}</div></div><button class="btn ghost danger sm" data-cdel="${esc(o.name)}">Delete from cloud</button></div>`}).join("")}</div>`;
-      $$("[data-cdel]",box).forEach(b=>b.onclick=()=>armDelete(b,async()=>{const c=cloudCfg(),name=b.dataset.cdel;
-        try{const x=await fetch(`${c.url}/v/${encodeURIComponent(name)}`,{method:"DELETE",headers:{"x-key":c.key}});if(!x.ok)throw 0}catch(e){toast("Couldn't delete it. Try again");return}
+      $$("[data-cdel]",box).forEach(b=>b.onclick=()=>armDelete(b,async()=>{const name=b.dataset.cdel;
+        try{await api(`/v/${encodeURIComponent(name)}`,{method:"DELETE"})}catch(e){toast("Couldn't delete it. Try again");return}
         S.matches.forEach(m=>{if(m.cloud?.name===name){delete m.cloud;if(isCloud(videoMap[m.id]))delete videoMap[m.id]}});save();refresh();toast("Deleted from the cloud");cloudList()}))}
     catch(e){box.innerHTML=`<div class="notice">${esc(e.message)}</div>`}};
-  $("#s-cloud-save").onclick=async()=>{const c=parseCloudCode($("#s-cloud").value);if(!c){toast("That doesn't look like a connection code");return}
-    const old=localStorage.getItem(CLOUD_KEY);try{localStorage.setItem(CLOUD_KEY,JSON.stringify(c))}catch(e){}
-    try{await cloudApi("/list")}catch(e){try{old?localStorage.setItem(CLOUD_KEY,old):localStorage.removeItem(CLOUD_KEY)}catch(x){}toast(e.message);return}
-    linkCloud();refresh(true);toast("Cloud storage connected");$("#nav-settings").click()};
-  const so=$("#s-cloud-off");if(so)so.onclick=e=>armDelete(e.currentTarget,()=>{try{localStorage.removeItem(CLOUD_KEY)}catch(x){}
-    Object.keys(videoMap).forEach(k=>{if(isCloud(videoMap[k]))delete videoMap[k]});refresh(true);closeModal();toast("This device is disconnected. The videos stay in the cloud")});
+  const sa=$("#s-admin");if(sa)sa.onclick=openAdmin;
+  $("#s-out").onclick=e=>armDelete(e.currentTarget,async()=>{await settled();signOut()});
   cloudList();
   $("#s-save").onclick=()=>{S.settings={brand:$("#s-brand").value.trim(),contact:$("#s-contact").value.trim()};save();closeModal();refresh();toast("Settings saved")};
   $("#s-export").onclick=exportBackup;
   $("#s-import").onchange=e=>{const f=e.target.files[0];if(f)importBackup(f)};
 };
-window.addEventListener("beforeunload",e=>{if(exporting){e.preventDefault();e.returnValue=""}});
+window.addEventListener("beforeunload",e=>{if(exporting||dirty||saving){e.preventDefault();e.returnValue=""}});
+
+/* ---------- accounts & devices ----------
+   Nothing opens without signing in. Each browser makes its own device key and keeps it in IndexedDB; the private half
+   can't be read out, so a password used on another computer only creates a new device that waits for the owner's approval */
+const GEM=`<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8.2 5.2H23.8L29.8 12.4 16 28.6 2.2 12.4Z" fill="#c8f43c" fill-opacity=".22" stroke="#c8f43c" stroke-width="2.6" stroke-linejoin="round"/><path d="M2.2 12.4H29.8M11.8 12.4 16 5.2 20.2 12.4 16 28.6 11.8 12.4" fill="none" stroke="#c8f43c" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+const APP_URL="https://rd17-8.github.io/academy-vault/";
+let idbOpen=null;
+function idb(){return idbOpen||(idbOpen=new Promise((ok,no)=>{const r=indexedDB.open("gemball-device",1);r.onupgradeneeded=()=>r.result.createObjectStore("k");r.onsuccess=()=>ok(r.result);r.onerror=()=>{idbOpen=null;no(r.error)}}))}
+async function idbGet(k){const db=await idb();return new Promise((ok,no)=>{const q=db.transaction("k").objectStore("k").get(k);q.onsuccess=()=>ok(q.result);q.onerror=()=>no(q.error)})}
+async function idbPut(k,v){const db=await idb();return new Promise((ok,no)=>{const t=db.transaction("k","readwrite");t.objectStore("k").put(v,k);t.oncomplete=()=>ok();t.onerror=()=>no(t.error)})}
+function deviceLabel(){
+  const u=navigator.userAgent;
+  const b=/Edg\//.test(u)?"Edge":/SamsungBrowser/.test(u)?"Samsung Internet":/OPR\//.test(u)?"Opera":/Firefox\//.test(u)?"Firefox":/Chrome\//.test(u)?"Chrome":/Safari\//.test(u)?"Safari":"Browser";
+  const o=/iPhone/.test(u)?"iPhone":/iPad/.test(u)?"iPad":/Android/.test(u)?"Android":/Windows/.test(u)?"Windows":/Mac OS X/.test(u)?"Mac":/Linux/.test(u)?"Linux":"";
+  return o?`${b} on ${o}`:b;
+}
+async function myDevice(){
+  let d=null;try{d=await idbGet("device")}catch(e){}
+  if(d)return d;
+  const kp=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},false,["sign","verify"]);
+  const j=await crypto.subtle.exportKey("jwk",kp.publicKey);
+  d={id:crypto.randomUUID(),priv:kp.privateKey,pub:{x:j.x,y:j.y},label:deviceLabel()};
+  await idbPut("device",d);
+  return d;
+}
+const b64u=buf=>btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+const shortId=id=>String(id||"").replace(/-/g,"").slice(0,8).toUpperCase().replace(/^(.{4})/,"$1·");
+async function signIn(path,f){
+  const d=await myDevice(),u=String(f.username||"").trim().toLowerCase(),ts=Date.now();
+  const sig=b64u(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},d.priv,new TextEncoder().encode(`gemball-login|${u}|${d.id}|${ts}`)));
+  let r;
+  try{r=await fetch(API+path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...f,username:u,device:{id:d.id,pub:d.pub,label:d.label},ts,sig})})}
+  catch(e){throw new Error("No connection to the GEMBALL cloud")}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||"The GEMBALL cloud didn't answer");
+  return j;
+}
+
+let pend=null,pendTimer=null;
+function lock(){document.body.classList.add("locked");$("#gate").hidden=false}
+function unlock(){clearTimeout(pendTimer);document.body.classList.remove("locked");$("#gate").hidden=true;$("#gate").innerHTML=""}
+const gateHead=`<div class="gate-logo">${GEM}<b>GEMBALL</b></div>`;
+function gateMsg(html){lock();$("#gate").innerHTML=`<div class="gate-card">${gateHead}${html}</div>`}
+function gate(mode,info){
+  lock();clearTimeout(pendTimer);
+  if(mode==="login"){
+    gateMsg(`<h1>Sign in</h1><p class="muted">GEMBALL is private. Sign in with the account you received from GEMBALL.</p>
+      ${info?`<div class="notice">${esc(info)}</div>`:""}
+      <form class="gate-form" id="g-form"><label class="f">Username<input id="g-user" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+      <label class="f">Password<input id="g-pass" type="password" autocomplete="current-password"></label>
+      <button class="btn primary" id="g-go">Sign in</button></form>
+      <p class="muted small" id="g-setup-row" hidden><a href="#" id="g-setup">First-time setup (owner)</a></p>`);
+    $("#g-form").onsubmit=async e=>{e.preventDefault();const f={username:$("#g-user").value,password:$("#g-pass").value};if(!f.username.trim()||!f.password){toast("Fill in your username and password");return}
+      const b=$("#g-go");b.disabled=true;b.textContent="Signing in…";
+      try{await afterSignIn(await signIn("/auth/login",f),f)}catch(x){toast(x.message);if($("#g-go")){b.disabled=false;b.textContent="Sign in"}}};
+    fetch(API+"/auth/status").then(r=>r.json()).then(j=>{const row=$("#g-setup-row");if(j.setup&&row){row.hidden=false;$("#g-setup").onclick=e=>{e.preventDefault();gate("setup")}}}).catch(()=>{});
+    $("#g-user").focus();
+  }else if(mode==="setup"){
+    /* a device that used the cloud before accounts existed still has the connection code saved; it is offered here */
+    let code="";try{const c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");if(c?.url&&c?.key)code=c.url+"#"+c.key}catch(e){}
+    gateMsg(`<h1>Create the owner account</h1><p class="muted">This is done once. The owner account creates the client accounts and approves every device.</p>
+      <form class="gate-form" id="g-form">
+      <label class="f">Connection code<input id="g-code" type="password" dir="ltr" autocomplete="off" value="${esc(code)}" placeholder="https://….workers.dev#…"></label>
+      ${code?`<p class="muted small" style="margin-top:-6px">Filled in from this device's cloud settings.</p>`:""}
+      <label class="f">Your name<input id="g-name" autocomplete="name"></label>
+      <label class="f">Username<input id="g-user" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+      <label class="f">Password (at least 10 characters)<input id="g-pass" type="password" autocomplete="new-password"></label>
+      <label class="f">Password again<input id="g-pass2" type="password" autocomplete="new-password"></label>
+      <button class="btn primary" id="g-go">Create and sign in</button></form>
+      <p class="muted small"><a href="#" id="g-back">Back to sign in</a></p>`);
+    $("#g-back").onclick=e=>{e.preventDefault();gate("login")};
+    $("#g-form").onsubmit=async e=>{e.preventDefault();
+      const c=parseCloudCode($("#g-code").value),f={name:$("#g-name").value.trim(),username:$("#g-user").value,password:$("#g-pass").value};
+      if(!c||c.url.replace(/\/$/,"")!==API){toast("That isn't the GEMBALL connection code");return}
+      if(f.password.length<10){toast("Use a password of at least 10 characters");return}
+      if(f.password!==$("#g-pass2").value){toast("The two passwords are different");return}
+      const b=$("#g-go");b.disabled=true;b.textContent="Creating…";
+      try{await afterSignIn(await signIn("/auth/setup",{...f,key:c.key}),f)}catch(x){toast(x.message);if($("#g-go")){b.disabled=false;b.textContent="Create and sign in"}}};
+  }else{
+    const waiting=mode==="pending";
+    gateMsg(`<h1>${waiting?"Waiting for approval":"This device is switched off"}</h1>
+      <p class="muted">${waiting?"GEMBALL checks every new phone or computer before it can open the platform. This page lets you in by itself as soon as the device is approved.":"GEMBALL switched off access from this device. If you think this is a mistake, contact GEMBALL."}</p>
+      <div class="gate-dev"><span class="muted small">This device</span><b>${esc(info.label)}</b><span class="num">ID ${shortId(info.id)}</span><span class="muted small">Account: ${esc(info.username)}</span></div>
+      ${waiting?`<p class="muted small">If GEMBALL asks, read them the ID above so they know it's you.</p>`:""}
+      <div class="row">${waiting?`<button class="btn primary" id="g-check">Check now</button>`:""}<button class="btn ghost" id="g-other">Use another account</button></div>
+      ${waiting?`<p class="muted small"><a href="#" id="g-own">I'm the owner and have no approved device at hand</a></p>
+      <form class="gate-form" id="g-own-form" hidden><label class="f">Connection code<input id="g-code" type="password" dir="ltr" autocomplete="off" placeholder="https://….workers.dev#…"></label><button class="btn" id="g-own-go">Approve this device</button></form>`:""}`);
+    $("#g-other").onclick=()=>{pend=null;gate("login")};
+    if(waiting){
+      const check=async manual=>{try{await afterSignIn(await signIn("/auth/login",pend),pend)}catch(x){if(manual)toast(x.message);else pendTimer=setTimeout(check,15000)}};
+      $("#g-check").onclick=()=>check(true);
+      pendTimer=setTimeout(check,15000);
+      /* the owner's way back in after losing every approved device: the connection code (the server's secret key) approves this one */
+      $("#g-own").onclick=e=>{e.preventDefault();$("#g-own-form").hidden=false;$("#g-code").focus()};
+      $("#g-own-form").onsubmit=async e=>{e.preventDefault();
+        const c=parseCloudCode($("#g-code").value);if(!c||c.url.replace(/\/$/,"")!==API){toast("That isn't the GEMBALL connection code");return}
+        try{const r=await fetch(API+"/admin/device",{method:"POST",headers:{"content-type":"application/json","x-key":c.key},body:JSON.stringify({username:info.username,id:info.id,action:"approve"})});
+          if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||"That connection code didn't work");
+          await check(true)}catch(x){toast(x.message)}};
+    }
+  }
+}
+async function afterSignIn(j,f){
+  if(j.status!=="approved"){const d=await myDevice();pend={username:f.username,password:f.password};gate(j.status==="revoked"?"revoked":"pending",{label:d.label,id:d.id,username:String(f.username).trim().toLowerCase()});return}
+  pend=null;session={token:j.token,user:j.user};
+  try{localStorage.setItem(SESSION_KEY,JSON.stringify(session))}catch(e){}
+  try{localStorage.removeItem(CLOUD_KEY)}catch(e){} /* the old connection code held the owner's secret key; the session replaces it */
+  await enter();
+}
+async function enter(){
+  gateMsg(`<p class="muted">Opening your space…</p>`);
+  const me=await api("/auth/me");
+  session.user={...session.user,...me};
+  try{localStorage.setItem(SESSION_KEY,JSON.stringify(session))}catch(e){}
+  WS=null;wsName="";
+  await loadData();englishize();moveLocalData();linkCloud();
+  unlock();refresh(true);wsBar();adminNav();syncState("saved");
+}
+function signOut(reason){
+  clearTimeout(saveTimer);
+  session=null;WS=null;wsName="";dataVer=null;dirty=false;
+  try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(UNDO_KEY)}catch(e){}
+  S.teams=[];S.players=[];S.matches=[];S.clips=[];S.settings={brand:"",contact:""};
+  Object.keys(videoMap).forEach(k=>delete videoMap[k]);
+  exporting=false;closeModal();$("#root").innerHTML="";$("#ws-bar").hidden=true;$("#nav-admin").hidden=true;
+  gate("login",reason==="expired"?"You were signed out. Sign in again.":"");
+}
+async function start(){
+  if(!session){gate("login");return}
+  try{await enter()}
+  catch(e){if(!session)return; /* signOut already showed the sign-in */
+    gateMsg(`<h1>Can't open GEMBALL</h1><div class="notice">${esc(e.message)}</div><div class="row"><button class="btn primary" id="g-retry">Try again</button></div>`);
+    $("#g-retry").onclick=start}
+}
+
+/* ---------- the owner: clients' spaces, accounts, devices, requests from the website ---------- */
+function wsBar(){
+  const b=$("#ws-bar");
+  if(!WS){b.hidden=true;b.innerHTML="";return}
+  b.hidden=false;
+  b.innerHTML=`<div class="wrap"><span>You're in <b>${esc(wsName||WS)}</b>'s space</span><button class="btn sm" id="ws-back">Back to my space</button></div>`;
+  $("#ws-back").onclick=()=>openSpace(null);
+}
+async function openSpace(u,name){
+  if(exporting)return;
+  await settled();
+  if(dirty){toast("Your changes aren't saved yet. Try again in a moment");return}
+  const prev=[WS,wsName];
+  WS=u;wsName=u?name||u:"";
+  try{
+    Object.keys(videoMap).forEach(k=>{if(isCloud(videoMap[k]))delete videoMap[k]});
+    await loadData();linkCloud();closeModal();
+    if(location.hash&&location.hash!=="#/")location.hash="#/";
+    refresh(true);wsBar();toast(u?`Opened ${wsName}'s space`:"Back in your space");
+  }catch(e){[WS,wsName]=prev;linkCloud();toast(e.message)}
+}
+let adminPoll=null;
+async function adminNav(){
+  const b=$("#nav-admin");b.hidden=!isAdmin();
+  clearInterval(adminPoll);
+  if(!isAdmin())return;
+  const count=async()=>{if(!isAdmin())return;try{const [u,r]=await Promise.all([api("/admin/users"),api("/requests")]);
+    const n=u.users.reduce((a,x)=>a+x.devices.filter(d=>d.status==="pending").length,0)+r.requests.length,el=$("#nav-admin-n");
+    el.hidden=!n;el.textContent=n}catch(e){}};
+  count();adminPoll=setInterval(count,60000);
+}
+$("#nav-admin").onclick=()=>openAdmin();
+function genPass(){const c="abcdefghjkmnpqrstuvwxyz23456789",v=crypto.getRandomValues(new Uint8Array(12));return [...v].map(x=>c[x%c.length]).join("").replace(/^(.{4})(.{4})/,"$1-$2-")}
+const slugUser=s=>String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,24);
+function inviteBox(u,name,pw){
+  const txt=`GEMBALL access for ${name}\n\nOpen: ${APP_URL}\nUsername: ${u}\nPassword: ${pw}\n\nThe first time you sign in on a phone or computer, it waits until GEMBALL approves that device.`;
+  return `<div class="invite" data-text="${esc(txt)}"><b>Send this to ${esc(name)}</b><pre>${esc(txt)}</pre>
+    <div class="row"><button class="btn sm primary" data-inv="copy">Copy</button>${navigator.share?`<button class="btn sm" data-inv="share">Share…</button>`:""}</div>
+    <p class="muted small" style="margin:0">The password isn't shown again. You can always set a new one.</p></div>`;
+}
+function wireInvites(box){$$("[data-inv]",box).forEach(b=>b.onclick=async()=>{const txt=b.closest(".invite").dataset.text;
+  try{if(b.dataset.inv==="share")await navigator.share({text:txt});else{await navigator.clipboard.writeText(txt);toast("Copied")}}catch(e){}})}
+async function openAdmin(){
+  openModal(`<div class="spread"><h2>Accounts & devices</h2><button class="btn ghost" data-close>Close</button></div><div id="adm" style="display:flex;flex-direction:column;gap:14px"><p class="muted">Loading…</p></div>`);
+  $("#modal-root .panel").classList.add("wide");
+  await drawAdmin();
+}
+async function drawAdmin(note,fromReq){
+  const box=$("#adm");if(!box)return;
+  let users,reqs;
+  try{[users,reqs]=await Promise.all([api("/admin/users"),api("/requests")])}catch(e){box.innerHTML=`<div class="notice">${esc(e.message)}</div>`;return}
+  if(!$("#adm"))return;
+  const myDev=users.device,me=users.me;
+  const U=users.users.sort((a,b)=>(b.role==="admin")-(a.role==="admin")||a.name.localeCompare(b.name));
+  const pending=U.flatMap(u=>u.devices.filter(d=>d.status==="pending").map(d=>({u,d})));
+  const when=t=>t?new Date(t).toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"}):"never";
+  const btn=(action,u,d,label,cls)=>`<button class="btn sm ${cls}" data-dev="${action}" data-u="${esc(u.username)}" data-id="${esc(d.id)}">${label}</button>`;
+  const devRow=(u,d)=>`<div class="item"><div class="grow"><b>${esc(d.label||"Device")}</b> <span class="num muted">${shortId(d.id)}</span>${d.id===myDev?`<span class="chip-s ok">this device</span>`:""}
+      <div class="muted small">${d.status==="approved"?"Approved":d.status==="pending"?"Waiting for approval since "+when(d.created):"Switched off"} · last used ${when(d.lastSeen)}</div></div>
+      ${d.status!=="approved"?btn("approve",u,d,"Approve","primary"):""}${d.status==="approved"&&d.id!==myDev?btn("revoke",u,d,"Switch off","ghost"):""}${d.id!==myDev?btn("remove",u,d,"Remove","ghost danger"):""}</div>`;
+  box.innerHTML=`${note||""}
+    ${pending.length?`<section class="adm-sec"><h3>Waiting for your approval<span class="nbadge">${pending.length}</span></h3>
+      <div class="list">${pending.map(({u,d})=>`<div class="item"><div class="grow"><b>${esc(u.name)}</b> <span class="muted">${esc(u.username)}</span>
+        <div class="muted small">${esc(d.label)} · ID <span class="num">${shortId(d.id)}</span> · asked ${when(d.created)}</div></div>${btn("approve",u,d,"Approve","primary")}${btn("remove",u,d,"Reject","ghost danger")}</div>`).join("")}</div>
+      <p class="muted small" style="margin:0">Before approving, check with the person that the ID matches the one on their screen.</p></section>`:""}
+    <section class="adm-sec"><h3>Add a client</h3>
+      <div class="formgrid"><label class="f">Name<input id="a-name" placeholder="e.g. Sporting Lagos Academy"></label>
+        <label class="f">Username<input id="a-user" autocapitalize="none" spellcheck="false" dir="ltr" placeholder="e.g. sportinglagos"></label>
+        <label class="f">Password<span class="row" style="gap:6px;flex-wrap:nowrap"><input id="a-pass" dir="ltr" autocomplete="off" style="flex:1;min-width:0"><button class="btn sm" type="button" id="a-gen">Generate</button></span></label></div>
+      <div class="row"><button class="btn primary" id="a-create">Create account</button></div><div id="a-out"></div></section>
+    <section class="adm-sec"><h3>Accounts</h3>
+      ${U.map(u=>`<div class="acct${u.disabled?" off":""}"><div class="spread" style="flex-wrap:wrap;gap:8px"><div><b>${esc(u.name)}</b> <span class="muted">${esc(u.username)}</span>${u.role==="admin"?`<span class="chip-s ok">owner</span>`:""}${u.disabled?`<span class="chip-s">switched off</span>`:""}</div>
+        <div class="row" style="gap:6px">${u.role!=="admin"?`<button class="btn sm" data-open="${esc(u.username)}" data-name="${esc(u.name)}">Open their space</button>`:""}<button class="btn sm ghost" data-pw="${esc(u.username)}" data-name="${esc(u.name)}">New password</button>${u.username!==me&&u.role!=="admin"?`<button class="btn sm ghost${u.disabled?"":" danger"}" data-off="${esc(u.username)}" data-v="${u.disabled?0:1}">${u.disabled?"Switch on":"Switch off account"}</button>`:""}</div></div>
+        <div class="list">${u.devices.length?u.devices.map(d=>devRow(u,d)).join(""):`<p class="muted small" style="margin:6px 0 0">No device yet. Their first sign-in will wait here for your approval.</p>`}</div></div>`).join("")}</section>
+    <section class="adm-sec"><h3>Requests from the website${reqs.requests.length?`<span class="nbadge">${reqs.requests.length}</span>`:""}</h3>
+      ${reqs.requests.length?`<div class="list">${reqs.requests.map(r=>`<div class="item"><div class="grow"><b>${esc(r.name)}</b> · ${esc(r.org)} <span class="muted">(${esc(r.country)}${r.role?", "+esc(r.role):""})</span>
+        <div class="muted small">${esc(r.contact)} · ${when(Date.parse(r.at))}${r.lang?" · "+esc(r.lang.toUpperCase()):""}</div>${r.msg?`<div class="small">${esc(r.msg)}</div>`:""}</div>
+        <button class="btn sm" data-req-make="${esc(r.id)}">Create account</button><button class="btn sm ghost" data-req-done="${esc(r.id)}">Done</button></div>`).join("")}</div>`:`<p class="muted small" style="margin:0">No new requests.</p>`}</section>`;
+  wireInvites(box);
+  const again=(n,r)=>{drawAdmin(n,r);adminNav()};
+  const call=async(path,body)=>{try{return await api(path,{method:"POST",body})}catch(e){toast(e.message);return null}};
+  $$("[data-dev]",box).forEach(b=>{const run=async()=>{if(await call("/admin/device",{username:b.dataset.u,id:b.dataset.id,action:b.dataset.dev})){toast(b.dataset.dev==="approve"?"Device approved":b.dataset.dev==="revoke"?"Device switched off":"Device removed");again()}};
+    b.onclick=b.dataset.dev==="approve"?run:()=>armDelete(b,run)});
+  $$("[data-open]",box).forEach(b=>b.onclick=()=>openSpace(b.dataset.open,b.dataset.name));
+  $$("[data-off]",box).forEach(b=>{const run=async()=>{if(await call("/admin/user-state",{username:b.dataset.off,disabled:b.dataset.v==="1"})){toast(b.dataset.v==="1"?"Account switched off":"Account switched on");again()}};
+    b.onclick=b.dataset.v==="1"?()=>armDelete(b,run):run});
+  $$("[data-pw]",box).forEach(b=>b.onclick=()=>armDelete(b,async()=>{const pw=genPass();
+    if(await call("/admin/user",{username:b.dataset.pw,password:pw,reset:true}))again(inviteBox(b.dataset.pw,b.dataset.name,pw))}));
+  $$("[data-req-done]",box).forEach(b=>b.onclick=async()=>{if(await call("/admin/request-done",{id:b.dataset.reqDone}))again()});
+  $$("[data-req-make]",box).forEach(b=>b.onclick=()=>{const r=reqs.requests.find(x=>x.id===b.dataset.reqMake);if(!r)return;
+    $("#a-name").value=r.org;$("#a-user").value=slugUser(r.org);$("#a-pass").value=genPass();$("#a-create").dataset.req=r.id;$("#a-name").scrollIntoView({block:"center"});$("#a-name").focus()});
+  let typed=false;
+  $("#a-user").oninput=()=>{typed=true};
+  $("#a-name").oninput=()=>{if(!typed)$("#a-user").value=slugUser($("#a-name").value)};
+  $("#a-gen").onclick=()=>{$("#a-pass").value=genPass()};
+  if(fromReq)$("#a-create").dataset.req=fromReq;
+  $("#a-create").onclick=async e=>{
+    const name=$("#a-name").value.trim(),username=$("#a-user").value.trim().toLowerCase(),password=$("#a-pass").value,req=e.currentTarget.dataset.req;
+    if(!name||!username||!password){toast("Fill in a name, a username and a password");return}
+    const r=await call("/admin/user",{name,username,password});if(!r)return;
+    if(req)await call("/admin/request-done",{id:req});
+    toast("Account created");again(inviteBox(r.user.username,r.user.name,password));
+  };
+}
 
 /* ---------- start ---------- */
-load();englishize();linkCloud();
-refresh(true);
+start();
 })();
 </script>
 </body>
