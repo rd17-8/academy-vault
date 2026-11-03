@@ -368,7 +368,9 @@ function askYT(m){
     <p class="muted" style="margin:0">Clips are saved by their timestamp in the video. If you later attach the original file of the same match, they will line up with it too.</p>
     <div class="row"><button class="btn primary" id="ay-save">Save</button>${m.ytId?`<button class="btn ghost danger" id="ay-del">Remove link</button>`:""}</div>`);
   $("#ay-link").focus();
-  $("#ay-save").onclick=()=>{const id=ytId($("#ay-link").value);if(!id){toast("That doesn't look like a YouTube link");return}closeModal();if(current===Match)Match.src="yt";upd("matches",m.id,{ytId:id})};
+  $("#ay-save").onclick=()=>{const id=ytId($("#ay-link").value);if(!id){toast("That doesn't look like a YouTube link");return}closeModal();if(current===Match)Match.src="yt";upd("matches",m.id,{ytId:id});
+    /* the video's title may carry the result */
+    ytMeta(id).then(j=>{const mm=byId("matches",m.id);if(!mm)return;const got=fillFromTitle(mm,j.title);if(got.length){save();refresh();toast("From the YouTube title: "+got.join(", "))}}).catch(()=>{})};
   const d=$("#ay-del");if(d)d.onclick=()=>{closeModal();upd("matches",m.id,{ytId:""})};
 }
 function download(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}
@@ -468,7 +470,9 @@ function attachFile(m,f){
   videoMap[m.id]=URL.createObjectURL(f);
   if(m.fileName&&m.fileName!==f.name)toast("Note: this file differs from the one attached last time ("+m.fileName+")");
   if(current===Match&&route.id===m.id)Match.src="file";
+  const got=fillFromTitle(m,f.name);
   upd("matches",m.id,{fileName:f.name,fileSize:f.size});
+  if(got.length)toast("From the file name: "+got.join(", "));
 }
 async function pickVideo(m){
   if(window.showOpenFilePicker){
@@ -535,8 +539,9 @@ async function runCopy(m,link,resume){
     const mm=byId("matches",m.id);if(!mm)return;
     if(videoMap[m.id]&&isCloud(videoMap[m.id]))delete videoMap[m.id];
     mm.cloud={name:st.name,size:st.size,service:st.service,file:st.file};if(!mm.fileName)mm.fileName=st.file;
+    const got=fillFromTitle(mm,st.file);
     linkCloud();if(current===Match&&route.id===m.id)Match.src="file";save();refresh();closeCloudModal(m.id);
-    toast(`The video of ${matchLabel(mm)} is in the cloud`);
+    toast(`The video of ${matchLabel(mm)} is in the cloud${got.length?". From the file name: "+got.join(", "):""}`);
   }catch(e){delete cloudRuns[m.id];toast("The copy stopped: "+e.message+". Open the match and press Resume");refresh();closeCloudModal(m.id)}
 }
 const cloudModalOpen=id=>$("#modal-root .modal")?.dataset.cloud===id;
@@ -758,6 +763,17 @@ function parseMatchTitle(title){
   r.competition=segs.filter((x,i)=>i!==hit).map(x=>x.replace(TITLE_NOISE," ").replace(/\b(du|de|del|do|da|the|of|en)\s*$/i,"").replace(/\s+/g," ").replace(/^[\s\-–—,.]+|[\s\-–—,.]+$/g,"")).find(x=>x.replace(/[^\p{L}]/gu,"").length>=3)||"";
   if(!r.competition&&/(?<![\p{L}])(amical|friendly|amistoso|amig[aá]vel|test ?match|ידידות)(?![\p{L}])/iu.test(String(title)))r.competition="Friendly";
   return r;
+}
+/* a video's file name or title ("FC OSA 2-1 Leader SC 31.10.2026.mp4") fills the score and date a match doesn't have yet.
+   The goals go to the right club even when the title names them the other way round; a typed-in score is never replaced */
+function fillFromTitle(m,title){
+  const r=parseMatchTitle(String(title||"").replace(/\.[a-z0-9]{2,5}$/i,"").replace(/_+/g," "));
+  const h=byId("teams",m.homeId),a=byId("teams",m.awayId),got=[];
+  if(r.homeScore!=null&&r.awayScore!=null&&(m.homeScore==null||m.awayScore==null)&&h&&a){
+    const same=Math.max(teamScore(r.home,h.name),teamScore(r.away,a.name)),flip=Math.max(teamScore(r.home,a.name),teamScore(r.away,h.name));
+    if(Math.max(same,flip)>=.6){[m.homeScore,m.awayScore]=same>=flip?[r.homeScore,r.awayScore]:[r.awayScore,r.homeScore];got.push(`score ${m.homeScore}–${m.awayScore}`)}}
+  if(r.date&&!m.date){m.date=r.date;got.push("date "+r.date)}
+  return got;
 }
 /* "ASEC Mimosas U17" and "Asec Mimosas" are the same club; "FC", "Academy" and age groups don't tell clubs apart */
 const TEAM_STOP=/^(fc|cf|sc|ac|afc|club|football|futbol|futebol|academy|academie|academia|akademie|the|de|du|des|la|le|el|fa|u\d{1,2}|sub\d{1,2})$/;
@@ -1046,6 +1062,30 @@ const Team={
   }
 };
 
+/* everything about a match can be corrected after it was created; clips, shirt numbers and the video stay with it */
+function editMatch(m){
+  const opts=sel=>S.teams.slice().sort((x,y)=>x.name.localeCompare(y.name)).map(t=>`<option value="${esc(t.id)}" ${t.id===sel?"selected":""}>${esc(t.name)}</option>`).join("");
+  openModal(`<div class="spread"><h2>Edit match</h2><button class="btn ghost" data-close>Close</button></div>
+    <div class="formgrid">
+      <label class="f">Home team<select id="em-home">${opts(m.homeId)}</select></label>
+      <label class="f">Away team<select id="em-away">${opts(m.awayId)}</select></label>
+      <label class="f">Home goals<input type="number" min="0" max="99" id="em-hs" inputmode="numeric" value="${m.homeScore??""}"></label>
+      <label class="f">Away goals<input type="number" min="0" max="99" id="em-as" inputmode="numeric" value="${m.awayScore??""}"></label>
+      <label class="f">Date<input type="date" id="em-date" value="${esc(m.date||"")}"></label>
+      <label class="f">Competition<input id="em-comp" value="${esc(m.competition||"")}" placeholder="e.g. U17 League · Matchday 5"></label>
+    </div>
+    <div class="row"><button class="btn primary" id="em-save">Save</button><button class="btn" id="em-swap" type="button">⇄ Swap home and away</button></div>
+    <p class="muted" style="margin:0">Leave both goals empty if the result isn't known yet. Clips, shirt numbers and the video stay with the match.</p>`);
+  $("#em-swap").onclick=()=>{const h=$("#em-home"),a=$("#em-away"),hs=$("#em-hs"),as=$("#em-as");[h.value,a.value]=[a.value,h.value];[hs.value,as.value]=[as.value,hs.value]};
+  $("#em-save").onclick=()=>{
+    const homeId=$("#em-home").value,awayId=$("#em-away").value,hs=$("#em-hs").value,as=$("#em-as").value;
+    if(homeId===awayId){toast("Home and away must be different teams");return}
+    if((hs==="")!==(as==="")){toast("Fill in both goals, or leave both empty");return}
+    const data={homeId,awayId,homeScore:hs===""?null:+hs,awayScore:as===""?null:+as,date:$("#em-date").value,competition:$("#em-comp").value.trim()};
+    closeModal();upd("matches",m.id,data);toast("Match updated");
+  };
+}
+
 /* ---------- view: match room ---------- */
 /* where each match was left, so coming back from a profile picks up at the same minute */
 const POSKEY="gemball-match-pos";let lastPos={},backTo=null;
@@ -1160,8 +1200,9 @@ const Match={
     $("#m-head").innerHTML=`<div class="panel"><div class="vs"><a class="side" href="#/team/${esc(h?.id)}" style="color:inherit;text-decoration:none">${crest(h,"lg")}<b>${esc(h?.name)}</b><span class="muted">${flag(h?.country,"sm")} ${esc(CN[h?.country]||"")}</span></a>
       <div style="text-align:center;display:flex;flex-direction:column;gap:2px;align-items:center">${scoreHtml(m)}<span class="muted num">${esc(m.date||"")}</span><span class="muted">${esc(m.competition||"")}</span>${m.example?'<span class="ex">Example</span>':""}</div>
       <a class="side" href="#/team/${esc(a?.id)}" style="color:inherit;text-decoration:none">${crest(a,"lg")}<b>${esc(a?.name)}</b><span class="muted">${flag(a?.country,"sm")} ${esc(CN[a?.country]||"")}</span></a></div>
-      ${[h,a].some(t=>t&&!t.crestData)?`<div class="row" style="justify-content:center;margin-top:8px">${[h,a].map(t=>t&&!t.crestData?`<button class="btn sm" data-crestfor="${esc(t.id)}">Add ${esc(t.name)} crest</button>`:"").join("")}</div>`:""}</div>`;
+      <div class="row" style="justify-content:center;margin-top:8px">${[h,a].map(t=>t&&!t.crestData?`<button class="btn sm" data-crestfor="${esc(t.id)}">Add ${esc(t.name)} crest</button>`:"").join("")}<button class="btn sm" id="m-edit">Edit match details</button></div></div>`;
     $$("[data-crestfor]").forEach(b=>b.onclick=()=>openCrestPicker(byId("teams",b.dataset.crestfor)));
+    $("#m-edit").onclick=()=>editMatch(m);
     this.buildVideo(m);
     this.renderTimeline(m);
     this.renderTagPanel(m,h,a);
@@ -1689,8 +1730,9 @@ function parseMatchSheet(words,text,team,runs){
     if(!m)return;const s=m.length===5?[m[1],m[4]]:[m[1],m[2]],sc=s.map(x=>teamScore(x,team.name));
     if(Math.max(...sc)>=.6&&Math.min(...sc)<.6){sides=s.map(x=>x.replace(/^(date|match)\b.*?:/i,"").trim());ours=sc[0]>=sc[1]?0:1;if(m.length===5)score=[+m[2],+m[3]]}});
   /* club initials (FC, FA, SC) stay in capitals */
-  const club=s=>s.split(" ").map(w=>/^\p{Lu}{2,3}$/u.test(w)?w:titleCase(w)).join(" ");
-  const head={opp:sides?club(sides[1-ours]):"",date,score,home:ours===0,label:sides?`${club(sides[0])}${score?` ${score[0]}–${score[1]} `:" vs "}${club(sides[1])}`:"Match sheet"};
+  const club=s=>s.split(" ").map(w=>/^\p{Lu}{2,3}$/u.test(w)&&!/^(DE|DU|DES|LA|LE|LES|ET|OF|THE|AND)$/.test(w)?w:titleCase(w)).join(" ");
+  /* ourScore is [the club's goals, the opponent's], whichever side of the sheet the club is printed on */
+  const head={opp:sides?club(sides[1-ours]):"",date,score,ourScore:score&&sides?[score[ours],score[1-ours]]:null,home:ours===0,label:sides?`${club(sides[0])}${score?` ${score[0]}–${score[1]} `:" vs "}${club(sides[1])}`:"Match sheet"};
   /* which line-up is the club's: the side its name heads, else the one with the most known players */
   const pick=lists=>{if(lists.length===1)return 0;if(sides&&lists.length===2)return ours;
     const known=playersOf(team.id),hits=lists.map(l=>l.filter(r=>known.some(k=>nameSim(k.name,r.name)>=.75)).length);return hits.indexOf(Math.max(...hits))};
@@ -1960,11 +2002,11 @@ async function runOCR(files){
     return worker;
   }
   /* each match sheet keeps its own rows, filed under the match it belongs to (or into the open match) */
-  const sheetRows=[];imp.sheets=[];
+  const sheetRows=[];imp.sheets=[];imp.score=null;
   /* the opponent's line-up comes along (side "opp"), kept apart from ours since both teams wear the same numbers */
   function addSheet(sh){
     const opp=(sh.oppRows||[]).map(r=>({...r,side:"opp"}));
-    if(imp.match){sheetRows.push(...sh.rows,...opp);return}
+    if(imp.match){sheetRows.push(...sh.rows,...opp);if(sh.sheet.ourScore&&!imp.score)imp.score={...sh.sheet,save:true};return}
     const k=imp.sheets.length,m=sheetMatch(imp.team,sh.sheet);
     imp.sheets.push({...sh.sheet,matchId:m?m.id:sh.sheet.opp?"new":""});sheetRows.push(...[...sh.rows,...opp].map(r=>({...r,sheet:k})));
   }
@@ -2021,6 +2063,17 @@ async function runOCR(files){
 const saveCount=()=>imp.rows.filter(r=>r.include&&r.name.trim()).length;
 const saveLabel=()=>imp.match?`Save ${saveCount()} players for this match`:imp.rows.some(r=>r.sheet!=null)?`Save ${saveCount()} rows`:`Add ${saveCount()} players to squad`;
 const findByName=(list,r)=>r.name.trim()?list.find(p=>nameKey(p.name)===nameKey(r.name))||list.find(p=>nameSim(p.name,r.name)>=.75):null;
+/* a sheet's score as the match's [home, away] goals: the club's goals go to whichever side the club plays on in the match */
+function sheetGoals(m,team,our){
+  if(!m||!our)return null;
+  return m.homeId===team.id?[our[0],our[1]]:m.awayId===team.id?[our[1],our[0]]:null;
+}
+function scoreNote(m,team,sh){
+  const g=sheetGoals(m,team,sh.ourScore);
+  if(!g)return `${esc(sh.label)}`;
+  const h=byId("teams",m.homeId),a=byId("teams",m.awayId),had=m.homeScore!=null&&m.awayScore!=null;
+  return `${esc(h?.name||"?")} <b class="num">${g[0]}–${g[1]}</b> ${esc(a?.name||"?")}${had&&(m.homeScore!==g[0]||m.awayScore!==g[1])?` <span class="muted">(now ${m.homeScore}–${m.awayScore})</span>`:had?` <span class="muted">(already saved)</span>`:""}`;
+}
 /* the club on the other side of a sheet row's match: the open match's, the chosen match's, or the club a new match would be against */
 function oppTeam(r){
   const t=imp.team,sh=r.sheet!=null?imp.sheets[r.sheet]:null;
@@ -2042,13 +2095,15 @@ function renderReview(){
     ${imp.images.length?`<div class="thumbs">${imp.images.map(u=>`<a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="Uploaded image"></a>`).join("")}<span class="muted" style="font-size:.8rem">Click to enlarge</span></div>`:""}
     <div style="min-width:0;flex:1">
       <div class="spread"><h3>${imp.rows.length} rows found. Check and fix before saving</h3><button class="btn sm" id="imp-add">+ Row</button></div>
+      ${mt&&imp.score?`<label class="row" style="gap:6px;margin-bottom:8px"><input type="checkbox" id="imp-score" ${imp.score.save?"checked":""}> Save the score from the sheet: ${scoreNote(mt,t,imp.score)}</label>`:""}
       <div class="scroll-x"><table class="imp"><thead><tr><th></th><th>No.</th><th>Name</th><th>Position</th><th>Born</th><th>Foot</th><th></th></tr></thead><tbody>
       ${imp.rows.map((r,i)=>{const ex=byNum(r),sh=r.sheet!=null&&r.sheet!==imp.rows[i-1]?.sheet?sheets[r.sheet]:null;
         /* a match sheet's rows come under a header saying which match their shirt numbers are saved to */
         const head=sh?`<tr><td colspan="7" style="padding-top:14px"><div class="row" style="gap:8px"><b>Match sheet: ${esc(sh.label)}${sh.date?" · "+esc(sh.date):""}</b>
           <label class="row" style="gap:6px">Numbers go to<select data-sheet-i="${r.sheet}"><option value="">Don't save the numbers</option>
           ${S.matches.filter(m=>m.homeId===t.id||m.awayId===t.id).sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(m=>`<option value="${esc(m.id)}" ${sh.matchId===m.id?"selected":""}>${esc(matchLabel(m))}</option>`).join("")}
-          ${sh.opp?`<option value="new" ${sh.matchId==="new"?"selected":""}>Create the match: ${esc(sh.home?t.name+" vs "+sh.opp:sh.opp+" vs "+t.name)}${sh.date?" · "+esc(sh.date):""}</option>`:""}</select></label></div></td></tr>`:
+          ${sh.opp?`<option value="new" ${sh.matchId==="new"?"selected":""}>Create the match: ${esc(sh.home?t.name+" vs "+sh.opp:sh.opp+" vs "+t.name)}${sh.date?" · "+esc(sh.date):""}</option>`:""}</select></label>
+          ${sh.ourScore&&sh.matchId?`<label class="row" style="gap:6px"><input type="checkbox" data-score-i="${r.sheet}" ${sh.saveScore!==false?"checked":""}> Save the score: ${sh.matchId==="new"?esc(sh.label):scoreNote(byId("matches",sh.matchId),t,sh)}</label>`:""}</div></td></tr>`:
           r.sheet==null&&i===0&&imp.rows.some(x=>x.sheet!=null)?`<tr><td colspan="7"><b>Squad list</b></td></tr>`:"";
         const ot=r.side==="opp"&&imp.rows[i-1]?.side!=="opp"?oppTeam(r):null,on=ot?.name||(r.sheet!=null?sheets[r.sheet].opp:"")||"the opponent";
         const ohead=r.side==="opp"&&imp.rows[i-1]?.side!=="opp"?`<tr><td colspan="7" style="padding-top:10px"><span class="row" style="gap:8px">${ot?crest(ot,"sm"):""}<b>Opponent: ${esc(on)}</b>
@@ -2066,6 +2121,8 @@ function renderReview(){
         :sheets.length?"Match-sheet numbers are saved for their match only; the players join the squad without a fixed number.":"A player whose number is already in the squad is updated, not duplicated."}</span></div>
     </div></div>`;
   $$("[data-sheet-i]",box).forEach(s=>s.onchange=()=>{sheets[+s.dataset.sheetI].matchId=s.value;renderReview()});
+  $$("[data-score-i]",box).forEach(c=>c.onchange=()=>{sheets[+c.dataset.scoreI].saveScore=c.checked});
+  const isc=$("#imp-score");if(isc)isc.onchange=()=>{imp.score.save=isc.checked};
   $$("[data-k]",box).forEach(el=>el.onchange=()=>{const r=imp.rows[+el.dataset.i],k=el.dataset.k;
     if(k==="include")r.include=el.checked;else if(k==="number"||k==="birthYear")r[k]=el.value===""?null:+el.value;else r[k]=el.value;
     if(k==="include"||k==="number"||k==="name")renderReview();else{const s=$("#imp-save");s.textContent=saveLabel()}});
@@ -2084,7 +2141,9 @@ function renderReview(){
       imp.rows.filter(r=>r.include&&r.name.trim()).forEach(r=>{const opp=r.side==="opp";if(opp&&!o)return;
         const pl=place(r,opp?o:t,opp?oppList:existing);
         if(r.number!=null&&r.number!=="")nums[pl.id]=+r.number});
-      mt.nums=nums;save();imp=null;closeModal();refresh();toast(`Numbers saved for this match${added?`, ${added} new player${added>1?"s":""} added to the squad`:""}${oppNote(o)}`);return}
+      const g=imp.score?.save?sheetGoals(mt,t,imp.score.ourScore):null;if(g){mt.homeScore=g[0];mt.awayScore=g[1]}
+      if(!mt.date&&imp.score?.date)mt.date=imp.score.date;
+      mt.nums=nums;save();imp=null;closeModal();refresh();toast(`Numbers saved for this match${g?`, score ${g[0]}–${g[1]}`:""}${added?`, ${added} new player${added>1?"s":""} added to the squad`:""}${oppNote(o)}`);return}
     imp.rows.filter(r=>r.include&&r.name.trim()&&r.sheet==null).forEach(r=>{
       const ex=byNum(r);
       const data={name:r.name.trim(),number:r.number??"",position:r.position||"",birthYear:r.birthYear||null,foot:r.foot||""};
@@ -2092,7 +2151,7 @@ function renderReview(){
       else{S.players.push({id:uid(),createdAt:Date.now(),teamId:t.id,...data});added++}
     });
     /* match sheets after the squad list, so their players are found among the ones just added */
-    const squad=playersOf(t.id);let filed=0,lastOpp=null;
+    const squad=playersOf(t.id),scored=[];let filed=0,lastOpp=null;
     sheets.forEach((sh,k)=>{const rs=imp.rows.filter(r=>r.include&&r.name.trim()&&r.sheet===k);if(!rs.length)return;
       let m=sh.matchId&&sh.matchId!=="new"?byId("matches",sh.matchId):null;
       if(sh.matchId==="new"){let o=findTeam(sh.opp);if(o&&o.id===t.id)o=null;
@@ -2101,12 +2160,14 @@ function renderReview(){
         S.matches.push(m);sh.matchId=m.id}
       /* the opponent's players go to the club on the other side of that match; without a match there is nowhere to put them */
       const o=m?byId("teams",m.homeId===t.id?m.awayId:m.homeId):null,oppList=o?playersOf(o.id):[];if(o)lastOpp=o;
+      const g=sh.saveScore!==false?sheetGoals(m,t,sh.ourScore):null;if(g){m.homeScore=g[0];m.awayScore=g[1];scored.push(`${g[0]}–${g[1]}`)}
+      if(m&&!m.date&&sh.date)m.date=sh.date;
       const nums={...(m?.nums||{})};
       rs.forEach(r=>{const opp=r.side==="opp";if(opp&&!o)return;
         const pl=place(r,opp?o:t,opp?oppList:squad);
         if(m&&r.number!=null&&r.number!=="")nums[pl.id]=+r.number});
       if(m){m.nums=nums;filed++}});
-    save();imp=null;closeModal();refresh();toast([added||!filed?`Added ${added} players`:"",updated?`updated ${updated}`:"",filed?`shirt numbers saved for ${filed} match${filed>1?"es":""}`:""].filter(Boolean).join(", ").replace(/^./,c=>c.toUpperCase())+oppNote(lastOpp));
+    save();imp=null;closeModal();refresh();toast([added||!filed?`Added ${added} players`:"",updated?`updated ${updated}`:"",filed?`shirt numbers saved for ${filed} match${filed>1?"es":""}`:"",scored.length?`score ${scored.join(", ")} saved`:""].filter(Boolean).join(", ").replace(/^./,c=>c.toUpperCase())+oppNote(lastOpp));
   };
 }
 
