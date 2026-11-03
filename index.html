@@ -269,6 +269,8 @@ body.locked>*:not(#gate):not(#toast):not(#modal-root){display:none!important}
 .wsbar .wrap{display:flex;align-items:center;gap:12px;justify-content:space-between;padding-block:8px;flex-wrap:wrap}
 .wsbar .btn{background:var(--accent-ink);color:var(--accent);border-color:var(--accent-ink)}
 .nbadge{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:500 .72rem var(--f-num);margin-inline-start:6px;vertical-align:middle}
+.nbadge.warn{background:var(--danger);color:#fff}
+.adm-sec .item.bad b+span{color:var(--danger);font-weight:600}
 .chip-s{display:inline-block;font-size:.72rem;font-weight:600;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--muted);margin-inline-start:4px}
 .chip-s.ok{border-color:var(--accent);color:var(--link)}
 .modal .panel.wide{width:min(900px,100%)}
@@ -2497,10 +2499,30 @@ async function openAdmin(){
   $("#modal-root .panel").classList.add("wide");
   await drawAdmin();
 }
+/* the activity log: who signed in or opened GEMBALL, when, on which device and from where; refused attempts stand out */
+const EVT={login:"Signed in",open:"Opened GEMBALL","new-device":"New device asked for approval","wrong-password":"Wrong password","unknown-user":"Tried an unknown username",
+  locked:"Locked out after too many wrong passwords","disabled-try":"Tried a switched-off account","revoked-try":"Tried a switched-off device",setup:"Created the owner account",
+  "create-user":"Account created","reset-password":"New password set",disable:"Account switched off",enable:"Account switched on",approve:"Device approved",revoke:"Device switched off",remove:"Device removed"};
+const EVT_BAD=new Set(["wrong-password","unknown-user","locked","disabled-try","revoked-try"]);
+let regionNames=null;try{regionNames=new Intl.DisplayNames(["en"],{type:"region"})}catch(e){}
+const countryName=c=>{try{return c&&regionNames?regionNames.of(c):c||""}catch(e){return c||""}};
+const placeTxt=p=>p?[[p.city,countryName(p.country)].filter(Boolean).join(", "),p.ip?"IP "+p.ip:""].filter(Boolean).join(" · "):"";
+let logFilter="",logShown=40;
+function drawLog(log,U){
+  const box=$("#adm-log");if(!box)return;
+  const names=Object.fromEntries(U.map(u=>[u.username,u.name]));
+  const rows=log.filter(e=>!logFilter||(logFilter==="!bad"?EVT_BAD.has(e.event):e.user===logFilter||e.by===logFilter));
+  const when=t=>new Date(t).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  box.innerHTML=rows.length?`<div class="list">${rows.slice(0,logShown).map(e=>`<div class="item${EVT_BAD.has(e.event)?" bad":""}"><span class="num muted small" style="width:96px;flex:none">${when(e.at)}</span>
+      <div class="grow"><b>${esc(names[e.user]||e.user||"?")}</b> <span>${esc(EVT[e.event]||e.event)}</span>${e.by&&e.by!==e.user?` <span class="muted">by ${esc(names[e.by]||e.by)}</span>`:""}
+      <div class="muted small">${[e.label?esc(e.label)+(e.device?` <span class="num">${shortId(e.device)}</span>`:""):"",esc(placeTxt(e))].filter(Boolean).join(" · ")}</div></div></div>`).join("")}</div>
+    ${rows.length>logShown?`<div class="row"><button class="btn sm ghost" id="log-more">Show more</button></div>`:""}`:`<p class="muted small" style="margin:0">Nothing here yet.</p>`;
+  const more=$("#log-more");if(more)more.onclick=()=>{logShown+=60;drawLog(log,U)};
+}
 async function drawAdmin(note,fromReq){
   const box=$("#adm");if(!box)return;
-  let users,reqs;
-  try{[users,reqs]=await Promise.all([api("/admin/users"),api("/requests")])}catch(e){box.innerHTML=`<div class="notice">${esc(e.message)}</div>`;return}
+  let users,reqs,log;
+  try{[users,reqs,log]=await Promise.all([api("/admin/users"),api("/requests"),api("/admin/log").then(r=>r.log).catch(()=>[])])}catch(e){box.innerHTML=`<div class="notice">${esc(e.message)}</div>`;return}
   if(!$("#adm"))return;
   const myDev=users.device,me=users.me;
   const U=users.users.sort((a,b)=>(b.role==="admin")-(a.role==="admin")||a.name.localeCompare(b.name));
@@ -2508,13 +2530,16 @@ async function drawAdmin(note,fromReq){
   const when=t=>t?new Date(t).toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"}):"never";
   const btn=(action,u,d,label,cls)=>`<button class="btn sm ${cls}" data-dev="${action}" data-u="${esc(u.username)}" data-id="${esc(d.id)}">${label}</button>`;
   const devRow=(u,d)=>`<div class="item"><div class="grow"><b>${esc(d.label||"Device")}</b> <span class="num muted">${shortId(d.id)}</span>${d.id===myDev?`<span class="chip-s ok">this device</span>`:""}
-      <div class="muted small">${d.status==="approved"?"Approved":d.status==="pending"?"Waiting for approval since "+when(d.created):"Switched off"} · last used ${when(d.lastSeen)}</div></div>
+      <div class="muted small">${d.status==="approved"?"Approved":d.status==="pending"?"Waiting for approval since "+when(d.created):"Switched off"} · last used ${when(d.lastSeen)}${d.lastPlace||d.firstPlace?` · ${esc(placeTxt(d.lastPlace||d.firstPlace))}`:""}</div></div>
       ${d.status!=="approved"?btn("approve",u,d,"Approve","primary"):""}${d.status==="approved"&&d.id!==myDev?btn("revoke",u,d,"Switch off","ghost"):""}${d.id!==myDev?btn("remove",u,d,"Remove","ghost danger"):""}</div>`;
   box.innerHTML=`${note||""}
     ${pending.length?`<section class="adm-sec"><h3>Waiting for your approval<span class="nbadge">${pending.length}</span></h3>
       <div class="list">${pending.map(({u,d})=>`<div class="item"><div class="grow"><b>${esc(u.name)}</b> <span class="muted">${esc(u.username)}</span>
-        <div class="muted small">${esc(d.label)} · ID <span class="num">${shortId(d.id)}</span> · asked ${when(d.created)}</div></div>${btn("approve",u,d,"Approve","primary")}${btn("remove",u,d,"Reject","ghost danger")}</div>`).join("")}</div>
+        <div class="muted small">${esc(d.label)} · ID <span class="num">${shortId(d.id)}</span> · asked ${when(d.created)}${d.firstPlace?` from ${esc(placeTxt(d.firstPlace))}`:""}</div></div>${btn("approve",u,d,"Approve","primary")}${btn("remove",u,d,"Reject","ghost danger")}</div>`).join("")}</div>
       <p class="muted small" style="margin:0">Before approving, check with the person that the ID matches the one on their screen.</p></section>`:""}
+    <section class="adm-sec"><div class="spread" style="flex-wrap:wrap;gap:8px"><h3>Activity${log.filter(e=>EVT_BAD.has(e.event)&&Date.now()-Date.parse(e.at)<7*864e5).length?`<span class="nbadge warn" title="Refused attempts in the last 7 days">${log.filter(e=>EVT_BAD.has(e.event)&&Date.now()-Date.parse(e.at)<7*864e5).length}</span>`:""}</h3>
+      <select id="log-filter" style="max-width:260px"><option value="">Everyone</option><option value="!bad">Only refused attempts</option>${U.map(u=>`<option value="${esc(u.username)}">${esc(u.name)}</option>`).join("")}</select></div>
+      <div id="adm-log"></div></section>
     <section class="adm-sec"><h3>Add a client</h3>
       <div class="formgrid"><label class="f">Name<input id="a-name" placeholder="e.g. Sporting Lagos Academy"></label>
         <label class="f">Username<input id="a-user" autocapitalize="none" spellcheck="false" dir="ltr" placeholder="e.g. sportinglagos"></label>
@@ -2529,6 +2554,8 @@ async function drawAdmin(note,fromReq){
         <div class="muted small">${esc(r.contact)} · ${when(Date.parse(r.at))}${r.lang?" · "+esc(r.lang.toUpperCase()):""}</div>${r.msg?`<div class="small">${esc(r.msg)}</div>`:""}</div>
         <button class="btn sm" data-req-make="${esc(r.id)}">Create account</button><button class="btn sm ghost" data-req-done="${esc(r.id)}">Done</button></div>`).join("")}</div>`:`<p class="muted small" style="margin:0">No new requests.</p>`}</section>`;
   wireInvites(box);
+  const lf=$("#log-filter");lf.value=logFilter;lf.onchange=()=>{logFilter=lf.value;logShown=40;drawLog(log,U)};
+  drawLog(log,U);
   const again=(n,r)=>{drawAdmin(n,r);adminNav()};
   const call=async(path,body)=>{try{return await api(path,{method:"POST",body})}catch(e){toast(e.message);return null}};
   $$("[data-dev]",box).forEach(b=>{const run=async()=>{if(await call("/admin/device",{username:b.dataset.u,id:b.dataset.id,action:b.dataset.dev})){toast(b.dataset.dev==="approve"?"Device approved":b.dataset.dev==="revoke"?"Device switched off":"Device removed");again()}};
