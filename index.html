@@ -200,6 +200,16 @@ section.stack{gap:12px}
 .stars button{font:inherit;font-size:1.2rem;background:none;border:0;cursor:pointer;color:var(--line);padding:0 2px}
 .stars button.on{color:var(--accent)}
 .rating{color:var(--accent);letter-spacing:1px}
+.toast .tbtn{pointer-events:auto;font:inherit;font-weight:700;background:none;border:0;color:inherit;text-decoration:underline;cursor:pointer;margin-inline-start:12px;padding:0}
+.rate{display:inline-flex;vertical-align:middle}
+.rate button{background:none;border:0;padding:0 1px;cursor:pointer;font-size:1.05rem;line-height:1;color:var(--line)}
+.rate button.on{color:var(--accent)}
+.rate button:hover{transform:scale(1.15)}
+.item select.act{font-size:.85rem;padding:3px 6px;max-width:190px}
+.item.picked{background:var(--accent-soft);border-radius:8px}
+.cliptools{position:sticky;top:0;z-index:2;background:var(--surface)}
+.timeline .mk{cursor:pointer}
+.timeline .mk:hover{opacity:1;transform:scaleY(1.25)}
 /* player quick view: opens beside the match video, no backdrop, so the match keeps playing */
 .qv{position:fixed;top:0;bottom:0;inset-inline-end:0;width:min(380px,100%);z-index:35;background:var(--surface);border-inline-start:1px solid var(--line);box-shadow:0 0 40px rgba(0,0,0,.28);overflow:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
 @media (max-width:700px){.qv{top:auto;width:100%;max-height:60vh;border-inline-start:0;border-top:1px solid var(--line);border-radius:14px 14px 0 0}}
@@ -376,7 +386,10 @@ function crest(team,size=""){
   return `<span class="${cls}" aria-hidden="true">${crestSvg(team)}</span>`;
 }
 const crestSrc=team=>team?.crestData||("data:image/svg+xml;charset=utf-8,"+encodeURIComponent(crestSvg(team)));
-function toast(msg){const t=$("#toast");$("#toast-text").textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,2600)}
+/* a toast can carry one action (Undo), and then stays a little longer */
+function toast(msg,act){const t=$("#toast"),s=$("#toast-text");s.textContent=msg;
+  if(act){const b=document.createElement("button");b.className="tbtn";b.textContent=act.label;b.onclick=()=>{t.hidden=true;act.fn()};s.append(b)}
+  t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,act?7000:2600)}
 const playersOf=teamId=>S.players.filter(p=>p.teamId===teamId).sort((a,b)=>(+a.number||99)-(+b.number||99));
 /* many academies hand out shirts per game: a match can carry its own numbers (match.nums[playerId]) over the squad number */
 const shirtNo=(pl,m)=>{const v=m?.nums?.[pl?.id];return v!=null&&v!==""?v:pl?.number};
@@ -468,6 +481,16 @@ function del(col,id){
   if(col==="players")S.clips=S.clips.filter(c=>c.playerId!==id);
   if(col==="matches")S.clips=S.clips.filter(c=>c.matchId!==id);
   save();refresh();
+}
+/* clips go at once, without a confirm step; the toast offers to bring them back */
+function removeClips(ids){
+  const set=new Set(ids),gone=S.clips.filter(c=>set.has(c.id));if(!gone.length)return;
+  S.clips=S.clips.filter(c=>!set.has(c.id));
+  if(tagState?.id&&set.has(tagState.id))tagState=null;
+  const redraw=()=>{save();refresh();if(qvId&&$("#qv"))openQV(qvId)};
+  redraw();
+  toast(gone.length>1?`${gone.length} clips deleted`:"Clip deleted",{label:"Undo",fn:()=>{
+    const have=new Set(S.clips.map(c=>c.id));S.clips.push(...gone.filter(c=>!have.has(c.id)));redraw();toast(gone.length>1?"Clips are back":"Clip is back")}});
 }
 function seed(){
   S.teams=[{id:"ex-a",name:"Example Academy A",country:"ng",city:"Lagos",ageGroup:"U17",primary:"#1f7a3d",secondary:"#ffffff",example:true},
@@ -1187,7 +1210,7 @@ function openQV(pid){
     </div>
     <label class="f">Scouting notes<textarea id="qv-note" rows="4" placeholder="Strengths, weaknesses, moments to come back to">${esc(pl.scoutNote||"")}</textarea></label>
     <div class="stack" style="gap:6px"><div class="spread"><b>In this match</b><span class="muted num">${here.length} clip${here.length===1?"":"s"}</span></div>
-      <div class="list">${here.map(c=>`<div class="item"><div class="grow"><b>${esc(c.action||"Clip")}</b> ${stars(c.rating)}<div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩${c.note?" · "+esc(c.note):""}</div></div><button class="btn sm" data-qvp="${esc(c.id)}" title="Play this clip">▶</button></div>`).join("")||`<p class="muted" style="margin:0">No clips of this player in this match yet.</p>`}</div></div>
+      <div class="list">${here.map(c=>`<div class="item"><div class="grow"><b>${esc(c.action||"Clip")}</b> ${stars(c.rating)}<div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩${c.note?" · "+esc(c.note):""}</div></div><button class="btn sm" data-qvp="${esc(c.id)}" title="Play this clip">▶</button><button class="btn ghost danger sm" data-qvd="${esc(c.id)}" title="Delete (you can undo)" aria-label="Delete clip">✕</button></div>`).join("")||`<p class="muted" style="margin:0">No clips of this player in this match yet.</p>`}</div></div>
     ${others.length?`<div class="stack" style="gap:4px"><b>Clips in other matches</b><span class="muted">${others.map(o=>esc(matchLabel(o))).join("<br>")}</span><span class="muted num">${cs.length} clips in all</span></div>`:""}
     <div class="stack" style="gap:4px"><a class="btn sm" href="#/player/${esc(pl.id)}" style="align-self:flex-start">Full profile and reel</a><span class="muted" style="font-size:.8rem">If you open it, the match picks up at the same minute when you come back.</span></div>`;
   $("#qv-x").onclick=closeQV;
@@ -1196,6 +1219,7 @@ function openQV(pid){
   $("#qv-by").onchange=e=>set({birthYear:+e.target.value||null});
   $("#qv-foot").onchange=e=>set({foot:e.target.value});
   $("#qv-note").oninput=e=>{pl.scoutNote=e.target.value;clearTimeout(qvSave);qvSave=setTimeout(save,400)};
+  $$("[data-qvd]",q).forEach(b=>b.onclick=()=>removeClips([b.dataset.qvd]));
   $$("[data-qvp]",q).forEach(b=>b.onclick=()=>{const c=byId("clips",b.dataset.qvp);if(!Match.v){toast("Attach the video file first");return}Match.preview(c.start,c.end)});
 }
 /* player names in the match room open the quick view; ctrl/cmd-click still opens the profile */
@@ -1226,7 +1250,7 @@ const Match={
       <div class="roster" id="squads"></div></div>`;
     $("#del-match").onclick=e=>armDelete(e.currentTarget,()=>{const m=this.match();const h=m?.homeId;del("matches",route.id);nav(h?"team":"",h)});
     this.src=null;
-    $("#tl").onclick=e=>{if(!this.v||!this.v.duration)return;const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;this.v.currentTime=x*this.v.duration};
+    $("#tl").onclick=e=>{const mk=e.target.closest(".mk");if(mk){this.editClip(mk.dataset.cid);return}if(!this.v||!this.v.duration)return;const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;this.v.currentTime=x*this.v.duration};
     this._key=null;this.v=null;this._backDone=false;
     clearInterval(this._clock);
     this._clock=setInterval(()=>this.tick(),200);
@@ -1366,7 +1390,7 @@ const Match={
     if(!d){tl.innerHTML="";return}
     const cs=S.clips.filter(c=>c.matchId===m.id);
     const sel=tagState&&tagState.start!=null?`<div class="sel" style="left:${tagState.start/d*100}%;width:${Math.max(.3,((tagState.end??tagState.start+1)-tagState.start)/d*100)}%"></div>`:"";
-    tl.innerHTML=sel+cs.map(c=>{const t=byId("teams",c.teamId);return `<span class="mk" title="${esc((byId("players",c.playerId)?.name||"")+" · "+(c.action||""))}" style="left:${c.start/d*100}%;width:${(c.end-c.start)/d*100}%;background:${esc(t?.primary||"#888")};box-shadow:0 0 0 1px ${esc(t?.secondary||"#fff")}"></span>`}).join("")+`<span class="ph"></span>`;
+    tl.innerHTML=sel+cs.map(c=>{const t=byId("teams",c.teamId);return `<span class="mk" data-cid="${esc(c.id)}" title="${esc((byId("players",c.playerId)?.name||"")+" · "+(c.action||"")+" · click to edit")}" style="left:${c.start/d*100}%;width:${(c.end-c.start)/d*100}%;background:${esc(t?.primary||"#888")};box-shadow:0 0 0 1px ${esc(t?.secondary||"#fff")}"></span>`}).join("")+`<span class="ph"></span>`;
     this.tick();
   },
   now(){return this.v?this.v.currentTime:0},
@@ -1407,7 +1431,7 @@ const Match={
     }
     const col=t=>`<div class="col"><div class="row">${crest(t,"sm")}<b>${esc(t?.name)}</b></div>${playersIn(t?.id,m).map(pl=>`<button class="pbtn" data-p="${esc(pl.id)}" aria-pressed="${ts.playerId===pl.id}">${kit(t,shirtNo(pl,m))}<span class="n">${esc(pl.name)}</span></button>`).join("")||`<a class="muted" href="#/team/${esc(t?.id)}">Add squad</a>`}</div>`;
     const len=ts.end!=null?ts.end-ts.start:null;
-    p.innerHTML=`<div class="spread"><h3>${ts.id?"Edit clip":"New clip"}</h3><button class="btn ghost" id="tg-cancel">Cancel <span class="kbd">Esc</span></button></div>
+    p.innerHTML=`<div class="spread"><h3>${ts.id?"Edit clip":"New clip"}</h3><div class="row" style="gap:6px">${ts.id?`<button class="btn ghost danger" id="tg-del" title="Delete this clip (you can undo)">Delete clip <span class="kbd">Del</span></button>`:""}<button class="btn ghost" id="tg-cancel">Cancel <span class="kbd">Esc</span></button></div></div>
       <div class="io">
         <span class="muted">In</span><div class="row"><span class="t">${fmt(ts.start,1)}</span><button class="btn sm" data-n="start:-1">−1</button><button class="btn sm" data-n="start:-0.5">−½</button><button class="btn sm" data-n="start:0.5">+½</button><button class="btn sm" data-n="start:1">+1</button><button class="btn sm" id="tg-sethere-in">Set to now</button></div>
         <span class="muted">Out</span><div class="row">${ts.end!=null?`<span class="t">${fmt(ts.end,1)}</span><button class="btn sm" data-n="end:-1">−1</button><button class="btn sm" data-n="end:-0.5">−½</button><button class="btn sm" data-n="end:0.5">+½</button><button class="btn sm" data-n="end:1">+1</button>`:`<span class="muted">Not marked yet</span>`}<button class="btn sm" id="tg-sethere-out">Set to now</button></div>
@@ -1432,6 +1456,7 @@ const Match={
     $("#tg-cancel").onclick=()=>this.cancelTag();
     $("#tg-preview").onclick=()=>this.preview(ts.start,ts.end);
     $("#tg-save").onclick=()=>this.saveTag();
+    const tdel=$("#tg-del");if(tdel)tdel.onclick=()=>removeClips([ts.id]);
   },
   preview(s,e){if(!this.v)return;this.v.currentTime=s;this.v.play().catch(()=>{});clearInterval(this._prev);
     this._prev=setInterval(()=>{if(!this.v||this.v.currentTime>=e){clearInterval(this._prev);this.v&&this.v.pause()}},100)},
@@ -1451,15 +1476,38 @@ const Match={
     $("#clip-count").textContent=cs.length?cs.length+" clips":"";
     const el=$("#clip-list");
     if(!cs.length){el.innerHTML=`<p class="muted">No clips tagged in this match yet.</p>`;return}
-    el.innerHTML=cs.map(c=>{const pl=byId("players",c.playerId),t=byId("teams",c.teamId);
-      return `<div class="item">${kit(t,shirtNo(pl,m))}<div class="grow"><a href="#/player/${esc(pl?.id)}" style="color:inherit;text-decoration:none"><b>${esc(pl?.name||"Deleted player")}</b></a> ${stars(c.rating)} <span class="muted">${esc(c.action||"")}${c.note?" · "+esc(c.note):""}</span><div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩ · ${(c.end-c.start).toFixed(1)}s</div></div>
-      <button class="btn sm" data-play="${esc(c.id)}">▶</button><button class="btn sm" data-edit="${esc(c.id)}">Edit</button><button class="btn ghost danger sm" data-del="${esc(c.id)}">Delete</button></div>`}).join("");
+    /* edits happen right in the list: tick to pick several, the action and stars change on the spot, delete is one click with Undo */
+    const sel=this._sel||(this._sel=new Set());[...sel].forEach(id=>{if(!cs.some(c=>c.id===id))sel.delete(id)});
+    const acts=c=>[...new Set([...(c.action&&!ACTIONS.includes(c.action)?[c.action]:[]),...ACTIONS])];
+    el.innerHTML=`<div class="item cliptools"><label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="cl-all" ${sel.size===cs.length?"checked":""}> Select all</label><span class="grow"></span>
+      ${sel.size?`<button class="btn ghost sm" id="cl-none">Clear</button><button class="btn danger sm" id="cl-delsel">Delete ${sel.size} selected</button>`:`<span class="muted small">Tick clips to delete several at once</span>`}</div>`+
+      cs.map(c=>{const pl=byId("players",c.playerId),t=byId("teams",c.teamId),id=esc(c.id);
+      return `<div class="item${sel.has(c.id)?" picked":""}"><input type="checkbox" data-sel="${id}" ${sel.has(c.id)?"checked":""} aria-label="Select this clip">${kit(t,shirtNo(pl,m))}
+        <div class="grow"><a href="#/player/${esc(pl?.id)}" style="color:inherit;text-decoration:none"><b>${esc(pl?.name||"Deleted player")}</b></a>
+          <span class="rate" role="group" aria-label="Rating">${[1,2,3,4,5].map(i=>`<button type="button" class="${i<=(c.rating||0)?"on":""}" data-rate="${id}:${i}" aria-label="${i} star${i>1?"s":""}">★</button>`).join("")}</span>
+          <div class="row" style="gap:8px;margin-top:2px"><select class="act" data-act="${id}" aria-label="Action"><option value="">Action…</option>${acts(c).map(a=>`<option ${a===c.action?"selected":""}>${esc(a)}</option>`).join("")}</select>
+          <span class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩ · ${(c.end-c.start).toFixed(1)}s</span>${c.note?`<span class="muted">${esc(c.note)}</span>`:""}</div></div>
+        <button class="btn sm" data-play="${id}" title="Play this clip">▶</button><button class="btn sm" data-edit="${id}" title="Change the in and out points, player or note">Edit</button><button class="btn ghost danger sm" data-del="${id}" title="Delete (you can undo)">Delete</button></div>`}).join("");
+    const again=()=>this.renderClips(m);
+    $("#cl-all").onchange=e=>{if(e.target.checked)cs.forEach(c=>sel.add(c.id));else sel.clear();again()};
+    const cn=$("#cl-none");if(cn)cn.onclick=()=>{sel.clear();again()};
+    const cd=$("#cl-delsel");if(cd)cd.onclick=()=>{const ids=[...sel];sel.clear();removeClips(ids)};
+    $$("[data-sel]",el).forEach(b=>b.onchange=()=>{b.checked?sel.add(b.dataset.sel):sel.delete(b.dataset.sel);again()});
+    $$("[data-rate]",el).forEach(b=>b.onclick=()=>{const [id,n]=b.dataset.rate.split(":"),c=byId("clips",id);upd("clips",id,{rating:c.rating===+n?0:+n})});
+    $$("[data-act]",el).forEach(s=>s.onchange=()=>upd("clips",s.dataset.act,{action:s.value}));
     $$("[data-play]",el).forEach(b=>b.onclick=()=>{const c=byId("clips",b.dataset.play);if(!this.v){toast("Attach the video file first");return}this.preview(c.start,c.end);$("#vbox").scrollIntoView({block:"nearest",behavior:"smooth"})});
-    $$("[data-edit]",el).forEach(b=>b.onclick=()=>{const c=byId("clips",b.dataset.edit);tagState={id:c.id,start:c.start,end:c.end,playerId:c.playerId,action:c.action||null,note:c.note||"",rating:c.rating||0};
-      if(this.v)this.v.currentTime=c.start;this.refreshTag();$("#tagpanel").scrollIntoView({block:"nearest",behavior:"smooth"})});
-    $$("[data-del]",el).forEach(b=>b.onclick=()=>armDelete(b,()=>del("clips",b.dataset.del)));
+    $$("[data-edit]",el).forEach(b=>b.onclick=()=>this.editClip(b.dataset.edit));
+    $$("[data-del]",el).forEach(b=>b.onclick=()=>removeClips([b.dataset.del]));
+  },
+  editClip(id){const c=byId("clips",id);if(!c)return;tagState={id:c.id,start:c.start,end:c.end,playerId:c.playerId,action:c.action||null,note:c.note||"",rating:c.rating||0};
+    if(this.v)this.v.currentTime=c.start;this.refreshTag();$("#tagpanel").scrollIntoView({block:"nearest",behavior:"smooth"})
   }
 };
+/* Del removes the clip that is open for editing (Undo in the toast brings it back) */
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Delete"||current!==Match||!tagState?.id||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||""))return;
+  e.preventDefault();removeClips([tagState.id]);
+});
 document.addEventListener("keydown",e=>{
   if(current===Match&&e.code==="Escape"&&$("#qv")&&!$("#modal-root .modal")){closeQV();e.preventDefault();return}
   if(current!==Match||!Match.v)return;
@@ -1515,7 +1563,8 @@ const Player={
         <input type="checkbox" data-inc="${esc(c.id)}" ${c.excluded?"":"checked"} aria-label="Include in reel">
         <div class="grow"><b>${esc(c.action||"Clip")}</b> ${stars(c.rating)} <span class="muted">${esc(matchLabel(m))}</span><div class="muted num">⁦${fmt(c.start,1)}–${fmt(c.end,1)}⁩ · ${(c.end-c.start).toFixed(1)}s${c.note?" · "+esc(c.note):""}</div></div>
         <button class="btn sm" data-mv="${i}:-1" ${i?"":"disabled"} aria-label="Move up">▲</button><button class="btn sm" data-mv="${i}:1" ${i<cs.length-1?"":"disabled"} aria-label="Move down">▼</button>
-        ${m?.ytId?`<button class="btn sm" data-yl="${esc(c.id)}" title="Copy YouTube link to this moment">Link</button>`:""}<a class="btn sm" href="#/match/${esc(c.matchId)}">Open match</a></div>`}).join("")}</div>`;
+        ${m?.ytId?`<button class="btn sm" data-yl="${esc(c.id)}" title="Copy YouTube link to this moment">Link</button>`:""}<a class="btn sm" href="#/match/${esc(c.matchId)}">Open match</a><button class="btn ghost danger sm" data-rdel="${esc(c.id)}" title="Delete (you can undo)">Delete</button></div>`}).join("")}</div>`;
+    $$("[data-rdel]",box).forEach(b=>b.onclick=()=>removeClips([b.dataset.rdel]));
     $$("[data-attach]",box).forEach(b=>b.onclick=async()=>{const m=byId("matches",b.dataset.attach);const r=await IDB.get(m.id);if(r)reconnect(m);else pickVideo(m)});
     $$("[data-inc]",box).forEach(b=>b.onchange=()=>upd("clips",b.dataset.inc,{excluded:!b.checked}));
     $$("[data-mv]",box).forEach(b=>b.onclick=()=>{const [i,d]=b.dataset.mv.split(":").map(Number);const ids=cs.map(c=>c.id);const j=i+d;[ids[i],ids[j]]=[ids[j],ids[i]];upd("players",pl.id,{reelOrder:ids})});
