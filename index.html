@@ -451,7 +451,7 @@ function importBackup(file){
       if(!Array.isArray(d.teams)||!Array.isArray(d.players)||!Array.isArray(d.matches)||!Array.isArray(d.clips))throw 0;
       if(!j.version||j.version<3){const cur=JSON.parse(JSON.stringify(S));migrate(d);d={teams:S.teams,players:S.players,matches:S.matches,clips:S.clips};Object.assign(S,cur)}
     }catch(e){toast(`That file doesn't look like a ${BRAND} backup`);return}
-    keepUndo();const n=mergeData(d);englishize();save();closeModal();refresh(true);
+    keepUndo();const n=mergeData(d);englishize();linkCloud();save();closeModal();refresh(true);
     toast(`Backup merged: ${n.teams} teams, ${n.players} players, ${n.matches} matches added. Nothing was removed`)};
   r.readAsText(file);
 }
@@ -489,6 +489,86 @@ async function reconnect(m){
   try{if(await h.requestPermission({mode:"read"})==="granted"){attachFile(m,await h.getFile());return}}catch(e){}
   pickVideo(m);
 }
+
+/* ---------- cloud storage: match videos copied from a WeTransfer / SwissTransfer link into the user's own bucket ----------
+   The connection code (server address + secret key) is kept apart from the data, so backups never carry the key.
+   A cloud video stands in for an attached file: matches play, reels play and export from it on any device. */
+const CLOUD_KEY="gemball-cloud",JOBS_KEY="gemball-cloud-jobs";
+function cloudCfg(){try{const c=JSON.parse(localStorage.getItem(CLOUD_KEY)||"null");return c&&c.url&&c.key?c:null}catch(e){return null}}
+function parseCloudCode(s){const m=String(s||"").trim().match(/^(https:\/\/[^\s#]+?)\/?#([a-f0-9]{32,})$/i);return m?{url:m[1],key:m[2]}:null}
+const cloudSrc=m=>{const c=cloudCfg();return c&&m?.cloud?.name?`${c.url}/v/${encodeURIComponent(m.cloud.name)}?k=${c.key}`:null};
+const isCloud=src=>/^https?:/.test(src||"");
+/* matches with a cloud copy play from it unless a file from this computer is attached */
+function linkCloud(){S.matches.forEach(m=>{const s=cloudSrc(m);if(s&&!(videoMap[m.id]&&!isCloud(videoMap[m.id])))videoMap[m.id]=s})}
+async function cloudApi(path,body){
+  const c=cloudCfg();if(!c)throw new Error("Cloud storage isn't connected");
+  const r=await fetch(c.url+path,body?{method:"POST",headers:{"content-type":"application/json","x-key":c.key},body:JSON.stringify(body)}:{headers:{"x-key":c.key}});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(r.status===401?"The cloud key is wrong. Check the connection code in Settings":j.error||"The cloud server didn't answer");
+  return j;
+}
+const gb=n=>(n/2**30).toFixed(n<2**30?2:1)+" GB";
+const loadJobs=()=>{try{return JSON.parse(localStorage.getItem(JOBS_KEY)||"{}")||{}}catch(e){return {}}};
+const saveJobs=j=>{try{localStorage.setItem(JOBS_KEY,JSON.stringify(j))}catch(e){}};
+const cloudRuns={};/* copies running in this page, by match id */
+const cloudPct=st=>Math.round(Object.keys(st.done).length/st.parts*100);
+function showCloudProgress(id){const st=cloudRuns[id];if(!st)return;const p=cloudPct(st);
+  $$(`[data-cloudprog="${id}"]`).forEach(el=>{const b=el.querySelector("i");if(b)b.style.width=p+"%";const t=el.querySelector("span");if(t)t.textContent=`Copying to the cloud: ${p}% of ${gb(st.size)}`})}
+/* the copy runs in 100 MB parts, three at a time; each finished part is remembered, so a closed page resumes where it stopped */
+async function runCopy(m,link,resume){
+  const st=resume||{...(await cloudApi("/start",{link,id:m.id})),link,done:{}};
+  cloudRuns[m.id]=st;const jobs=loadJobs();jobs[m.id]=st;saveJobs(jobs);
+  if(cloudModalOpen(m.id))askCloud(m);
+  if(current===Match&&route.id===m.id)Match.update();
+  showCloudProgress(m.id);
+  let next=1,failed=null;
+  const lane=async()=>{while(!failed){while(st.done[next])next++;const n=next++;if(n>st.parts)return;
+    for(let t=0;;t++){try{const r=await cloudApi("/part",{name:st.name,uploadId:st.uploadId,n,size:st.size,direct:st.direct,link:st.link});
+        if(r.direct)st.direct=r.direct;st.done[n]=r.part;const j=loadJobs();j[m.id]=st;saveJobs(j);showCloudProgress(m.id);break}
+      catch(e){if(t>=3){failed=e;return}await new Promise(r=>setTimeout(r,3000*(t+1)))}}}};
+  try{
+    await Promise.all([lane(),lane(),lane()]);
+    if(failed)throw failed;
+    const parts=Object.keys(st.done).map(Number).sort((a,b)=>a-b).map(n=>st.done[n]);
+    await cloudApi("/complete",{name:st.name,uploadId:st.uploadId,parts});
+    const j=loadJobs();delete j[m.id];saveJobs(j);delete cloudRuns[m.id];
+    const mm=byId("matches",m.id);if(!mm)return;
+    if(videoMap[m.id]&&isCloud(videoMap[m.id]))delete videoMap[m.id];
+    mm.cloud={name:st.name,size:st.size,service:st.service,file:st.file};if(!mm.fileName)mm.fileName=st.file;
+    linkCloud();if(current===Match&&route.id===m.id)Match.src="file";save();refresh();closeCloudModal(m.id);
+    toast(`The video of ${matchLabel(mm)} is in the cloud`);
+  }catch(e){delete cloudRuns[m.id];toast("The copy stopped: "+e.message+". Open the match and press Resume");refresh();closeCloudModal(m.id)}
+}
+const cloudModalOpen=id=>$("#modal-root .modal")?.dataset.cloud===id;
+const closeCloudModal=id=>{if(cloudModalOpen(id))closeModal()};
+function askCloud(m){
+  if(!cloudCfg()){openModal(`<div class="spread"><h2>Match video from a download link</h2><button class="btn ghost" data-close>Close</button></div>
+    <p style="margin:0">To copy videos from WeTransfer or SwissTransfer straight into the platform, connect your cloud storage first: open <b>Settings</b> and paste your connection code.</p>
+    <div class="row"><button class="btn primary" id="cl-set">Open Settings</button></div>`);$("#cl-set").onclick=()=>{closeModal();$("#nav-settings").click()};return}
+  const run=cloudRuns[m.id],job=!run&&loadJobs()[m.id];
+  openModal(`<div class="spread"><h2>Match video from a download link</h2><button class="btn ghost" data-close>Close</button></div>
+    <p class="muted" style="margin:0">Paste the WeTransfer or SwissTransfer link the club sent. The video is copied straight into your cloud storage, nothing downloads to this computer, and it plays from any device.</p>
+    ${run?`<div class="stack" data-cloudprog="${esc(m.id)}" style="gap:6px"><span>Copying to the cloud…</span><div class="bar"><i></i></div></div>
+      <p class="muted" style="margin:0">You can close this window and keep working. Keep this page open until it finishes.</p>`
+    :`${job?`<div class="notice">A copy of <b>${esc(job.file)}</b> stopped at ${cloudPct(job)}%.<div class="row" style="margin-top:8px"><button class="btn primary" id="cl-resume">Resume</button><button class="btn ghost" id="cl-drop">Start over</button></div></div>`:""}
+      <label class="f">Download link<input id="cl-link" type="url" dir="ltr" placeholder="https://we.tl/…  or  https://www.swisstransfer.com/d/…" value="${esc(job?.link||"")}"></label>
+      <div class="row"><button class="btn" id="cl-check">Check link</button></div><div id="cl-out"></div>`}`);
+  $("#modal-root .modal").dataset.cloud=m.id;
+  if(run){showCloudProgress(m.id);return}
+  const out=$("#cl-out");
+  if(job){$("#cl-resume").onclick=()=>runCopy(m,job.link,job);
+    $("#cl-drop").onclick=async()=>{try{await cloudApi("/abort",{name:job.name,uploadId:job.uploadId})}catch(e){}const j=loadJobs();delete j[m.id];saveJobs(j);askCloud(m)}}
+  $("#cl-check").onclick=async()=>{const link=$("#cl-link").value.trim();if(!link){toast("Paste the link first");return}
+    out.innerHTML=`<p class="muted">Reading the link…</p>`;
+    try{const r=await cloudApi("/resolve",{link});
+      out.innerHTML=`<div class="item"><div class="grow"><b>${esc(r.name)}</b><div class="muted">${gb(r.size)} · from ${esc(r.service)}${r.files>1?` · the largest video of ${r.files} files`:""}</div></div></div>
+        ${m.cloud?`<p class="muted">This replaces the video already in the cloud for this match.</p>`:""}
+        <div class="row" style="margin-top:8px"><button class="btn primary" id="cl-go">Copy to the cloud</button></div>`;
+      $("#cl-go").onclick=()=>{out.innerHTML=`<p class="muted">Starting…</p>`;
+        runCopy(m,link).catch(e=>{if(cloudModalOpen(m.id)&&$("#cl-out"))$("#cl-out").innerHTML=`<div class="notice">${esc(e.message)}</div>`})}}
+    catch(e){out.innerHTML=`<div class="notice">${esc(e.message)}</div>`}};
+}
+window.addEventListener("beforeunload",e=>{if(Object.keys(cloudRuns).length){e.preventDefault();e.returnValue=""}});
 
 /* ---------- YouTube ---------- */
 function ytId(url){
@@ -1102,7 +1182,7 @@ const Match={
   },
   buildVideo(m){
     if(!this.src||(this.src==="file"&&!videoMap[m.id])||(this.src==="yt"&&!m.ytId))this.src=videoMap[m.id]?"file":m.ytId?"yt":"file";
-    const key=[m.id,videoMap[m.id]||"",m.ytId||"",this.src].join("|");
+    const key=[m.id,videoMap[m.id]||"",m.ytId||"",this.src,!!cloudRuns[m.id],!!cloudCfg()].join("|");
     if(this._key===key)return;this._key=key;
     if(this.v&&this.v.isYT)this.v.destroy();
     this.v=null;
@@ -1120,17 +1200,23 @@ const Match={
       const af=$("#b-addfile");if(af)af.onclick=()=>pickVideo(m);
       const cy=$("#b-ytlink");if(cy)cy.onclick=()=>copyText(ytLink(m.ytId,this.v?this.v.currentTime:0),"Link to this moment copied");
       const ey=$("#b-edityt");if(ey)ey.onclick=()=>askYT(m);
+      const bc=$("#b-cloud");if(bc)bc.onclick=()=>askCloud(m);
       this.syncRec();
     };
+    const cloudBtn=sm=>cloudRuns[m.id]?`<button class="btn${sm?" ghost sm":""}" id="b-cloud" data-cloudprog="${esc(m.id)}"><span>Copying to the cloud…</span></button>`
+      :`<button class="btn${sm?" ghost sm":""}" id="b-cloud">${loadJobs()[m.id]?"Resume cloud copy":sm?"Replace from a download link":"From a download link"}</button>`;
     /* the first video of this visit starts where the match was left last time */
     const back=this._resume==null&&!this._backDone&&lastPos[m.id]?lastPos[m.id]:null;
     const resume=this._resume??back;this._resume=null;
     if(back&&(videoMap[m.id]||m.ytId)){this._backDone=true;toast("Picking up where you left off: "+fmt(back))}
     if(this.src==="file"&&videoMap[m.id]){
-      box.innerHTML=`<video id="vid" controls playsinline preload="auto" src="${videoMap[m.id]}"></video>`;
+      const cl=isCloud(videoMap[m.id]);
+      /* a cloud video is read with CORS so frames can still be drawn (crest picker, reel export) */
+      box.innerHTML=`<video id="vid" controls playsinline preload="auto"${cl?` crossorigin="anonymous"`:""} src="${esc(videoMap[m.id])}"></video>`;
       this.v=$("#vid");
       this.v.addEventListener("loadedmetadata",()=>{if(resume)this.v.currentTime=resume;if(Math.abs((m.duration||0)-this.v.duration)>1){m.duration=this.v.duration;save();this.renderTimeline(m)}});
-      ctrl.innerHTML=tools(`<button class="btn ghost sm" id="b-swap">Replace file</button>${m.ytId?"":`<button class="btn ghost sm" id="b-edityt">+ YouTube link</button>`}`);
+      if(cl)this.v.addEventListener("error",()=>toast("The cloud video didn't load. Check your internet connection or the connection code in Settings"),{once:true});
+      ctrl.innerHTML=tools(`${cl?`<span class="muted" title="Playing from your cloud storage">☁ Cloud</span>`:""}<button class="btn ghost sm" id="b-swap">${cl?"Attach a file":"Replace file"}</button>${cloudCfg()?cloudBtn(true):""}${m.ytId?"":`<button class="btn ghost sm" id="b-edityt">+ YouTube link</button>`}`);
       wireTools();return;
     }
     if(this.src==="yt"&&m.ytId){
@@ -1139,20 +1225,20 @@ const Match={
       const fail=msg=>{if(this._key!==key)return;
         const env=!webOrigin();
         box.innerHTML=`<div class="empty"><b>${env?"YouTube only plays from a web address":"The video didn't load from YouTube"}</b><span>${env?"This page is currently open from: <b dir=\"ltr\">"+esc(whereNow())+"</b>. Open your published site address in Chrome and the video will play here.":esc(msg)+". <span dir=\"ltr\">("+esc(whereNow())+")</span>"}</span><div class="row" style="justify-content:center"><a class="btn" href="${ytLink(m.ytId)}" target="_blank" rel="noopener">Open on YouTube</a><button class="btn primary" id="b-pick">Attach the original file</button></div></div>`;
-        ctrl.innerHTML=`<button class="btn ghost sm" id="b-edityt">Change link</button>`;$("#b-pick").onclick=()=>pickVideo(m);$("#b-edityt").onclick=()=>askYT(m);};
+        ctrl.innerHTML=`<button class="btn ghost sm" id="b-edityt">Change link</button>${cloudCfg()?cloudBtn(true):""}`;$("#b-pick").onclick=()=>pickVideo(m);$("#b-edityt").onclick=()=>askYT(m);const bc=$("#b-cloud");if(bc)bc.onclick=()=>askCloud(m);};
       makeYT($("#yt-slot"),m.ytId,msg=>fail(msg)).then(p=>{
         if(this._key!==key){p.destroy();return}
         this.v=p;if(resume)p.currentTime=resume;
         const iv=setInterval(()=>{if(this._key!==key||!this.v){clearInterval(iv);return}const d=p.duration;if(d>0){clearInterval(iv);if(Math.abs((m.duration||0)-d)>1){m.duration=d;save()}this.renderTimeline(m)}},500);
-        ctrl.innerHTML=tools(`<button class="btn ghost sm" id="b-ytlink">Copy link to moment</button>${videoMap[m.id]?"":`<button class="btn ghost sm" id="b-addfile">+ Original file</button>`}`);
+        ctrl.innerHTML=tools(`<button class="btn ghost sm" id="b-ytlink">Copy link to moment</button>${videoMap[m.id]?"":`<button class="btn ghost sm" id="b-addfile">+ Original file</button>${cloudCfg()?cloudBtn(true):""}`}`);
         wireTools();
       }).catch(e=>fail(e&&e.message&&e.message!=="timeout"&&e.message!=="env"?e.message:"Couldn't load the YouTube player. Check your internet connection"));
       return;
     }
     box.innerHTML=`<div class="empty"><b>Attach the match video</b><span>${m.fileName?"File used last time: <b>"+esc(m.fileName)+"</b>":"Choose a file from your computer or phone (it stays on your device), or paste a YouTube link."}</span>
-      <div class="row" style="justify-content:center"><button class="btn primary" id="b-pick">Choose video file</button><button class="btn" id="b-edityt">Paste YouTube link</button></div></div>`;
+      <div class="row" style="justify-content:center"><button class="btn primary" id="b-pick">Choose video file</button><button class="btn" id="b-edityt">Paste YouTube link</button>${cloudBtn(false)}</div></div>`;
     ctrl.innerHTML=`<span class="muted">Editing and tagging open once the video is attached.</span>`;
-    $("#b-pick").onclick=()=>pickVideo(m);$("#b-edityt").onclick=()=>askYT(m);
+    $("#b-pick").onclick=()=>pickVideo(m);$("#b-edityt").onclick=()=>askYT(m);$("#b-cloud").onclick=()=>askCloud(m);showCloudProgress(m.id);
     tryRestore(m).then(r=>{
       if(r!=="prompt"||this._key!==key)return;
       $("#b-pick").outerHTML=`<button class="btn primary" id="b-re">Reattach ${esc(m.fileName||"the file")}</button><button class="btn" id="b-pick">Choose another file</button>`;
@@ -1425,7 +1511,8 @@ async function exportReel(pl,list){
   const cv=$("#x-canvas"),ctx=cv.getContext("2d");
   let cancelled=false;$("#x-cancel").onclick=()=>{cancelled=true};
   exporting=true;
-  const v=document.createElement("video");v.playsInline=true;v.preload="auto";v.style.cssText="position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;bottom:0;left:0";document.body.appendChild(v);
+  /* anonymous CORS keeps frames from cloud videos drawable; files from this computer are unaffected */
+  const v=document.createElement("video");v.crossOrigin="anonymous";v.playsInline=true;v.preload="auto";v.style.cssText="position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;bottom:0;left:0";document.body.appendChild(v);
   try{
     await document.fonts.ready;
     const crestImg=await loadImg(crestSrc(t));
@@ -2068,8 +2155,29 @@ $("#nav-settings").onclick=()=>{
     <h3>Backup & moving between devices</h3>
     <p class="muted" style="margin:0">All data (teams, players, matches and clips) is stored in this browser. Video files themselves aren't included in the backup.</p>
     <div class="row"><button class="btn" id="s-export">Export backup</button><label class="btn" for="s-import">Restore backup</label><input type="file" id="s-import" accept="application/json,.json" hidden>${hasUndo()?`<button class="btn ghost" id="s-undo">Undo last restore</button>`:""}</div>
-    <p class="muted" style="margin:0;font-size:.85rem">Restoring adds the backup to what is already here. Nothing is deleted.</p>`);
+    <p class="muted" style="margin:0;font-size:.85rem">Restoring adds the backup to what is already here. Nothing is deleted.</p>
+    <hr style="border:0;border-top:1px solid var(--line);width:100%">
+    <h3>Cloud storage for match videos</h3>
+    <p class="muted" style="margin:0">Copy match videos from WeTransfer or SwissTransfer links into your own cloud storage, so they play on any device without downloading. Paste your connection code once on each device. It isn't included in backups.</p>
+    <label class="f">Connection code<input id="s-cloud" type="password" dir="ltr" autocomplete="off" value="${esc(cloudCfg()?cloudCfg().url+"#"+cloudCfg().key:"")}" placeholder="https://….workers.dev#…"></label>
+    <div class="row"><button class="btn" id="s-cloud-save">${cloudCfg()?"Update":"Connect"}</button>${cloudCfg()?`<button class="btn ghost danger" id="s-cloud-off">Disconnect this device</button>`:""}</div>
+    <div id="s-cloud-list"></div>`);
   const su=$("#s-undo");if(su)su.onclick=e=>armDelete(e.currentTarget,undoRestore);
+  const cloudList=async()=>{const box=$("#s-cloud-list");if(!box||!cloudCfg())return;box.innerHTML=`<p class="muted">Checking the cloud…</p>`;
+    try{const r=await cloudApi("/list");
+      box.innerHTML=`<p style="margin:0"><b>${gb(r.used)}</b> <span class="muted">used${r.used<10*2**30?` of the 10 GB free`:` (10 GB are free, the rest is billed by Cloudflare)`}</span></p>
+        <div class="list">${r.objects.map(o=>{const m=S.matches.find(x=>x.cloud?.name===o.name);return `<div class="item"><div class="grow"><b>${esc(m?matchLabel(m):"Not linked to a match")}</b><div class="muted">${gb(o.size)}${o.source?" · from "+esc(o.source):""}</div></div><button class="btn ghost danger sm" data-cdel="${esc(o.name)}">Delete from cloud</button></div>`}).join("")}</div>`;
+      $$("[data-cdel]",box).forEach(b=>b.onclick=()=>armDelete(b,async()=>{const c=cloudCfg(),name=b.dataset.cdel;
+        try{const x=await fetch(`${c.url}/v/${encodeURIComponent(name)}`,{method:"DELETE",headers:{"x-key":c.key}});if(!x.ok)throw 0}catch(e){toast("Couldn't delete it. Try again");return}
+        S.matches.forEach(m=>{if(m.cloud?.name===name){delete m.cloud;if(isCloud(videoMap[m.id]))delete videoMap[m.id]}});save();refresh();toast("Deleted from the cloud");cloudList()}))}
+    catch(e){box.innerHTML=`<div class="notice">${esc(e.message)}</div>`}};
+  $("#s-cloud-save").onclick=async()=>{const c=parseCloudCode($("#s-cloud").value);if(!c){toast("That doesn't look like a connection code");return}
+    const old=localStorage.getItem(CLOUD_KEY);try{localStorage.setItem(CLOUD_KEY,JSON.stringify(c))}catch(e){}
+    try{await cloudApi("/list")}catch(e){try{old?localStorage.setItem(CLOUD_KEY,old):localStorage.removeItem(CLOUD_KEY)}catch(x){}toast(e.message);return}
+    linkCloud();refresh(true);toast("Cloud storage connected");$("#nav-settings").click()};
+  const so=$("#s-cloud-off");if(so)so.onclick=e=>armDelete(e.currentTarget,()=>{try{localStorage.removeItem(CLOUD_KEY)}catch(x){}
+    Object.keys(videoMap).forEach(k=>{if(isCloud(videoMap[k]))delete videoMap[k]});refresh(true);closeModal();toast("This device is disconnected. The videos stay in the cloud")});
+  cloudList();
   $("#s-save").onclick=()=>{S.settings={brand:$("#s-brand").value.trim(),contact:$("#s-contact").value.trim()};save();closeModal();refresh();toast("Settings saved")};
   $("#s-export").onclick=exportBackup;
   $("#s-import").onchange=e=>{const f=e.target.files[0];if(f)importBackup(f)};
@@ -2077,7 +2185,7 @@ $("#nav-settings").onclick=()=>{
 window.addEventListener("beforeunload",e=>{if(exporting){e.preventDefault();e.returnValue=""}});
 
 /* ---------- start ---------- */
-load();englishize();
+load();englishize();linkCloud();
 refresh(true);
 })();
 </script>
