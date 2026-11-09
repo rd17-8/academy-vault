@@ -1244,7 +1244,7 @@ const Match={
       </div>
       <div class="panel" id="tagpanel"></div>
     </div>
-    <div class="panel"><div class="spread"><h3>Tagged clips</h3><span class="muted" id="clip-count"></span></div><div class="list" id="clip-list"></div></div>
+    <div class="panel"><div class="spread"><h3>Tagged clips</h3><span class="row"><span class="muted" id="clip-count"></span><button class="btn primary sm" id="m-allreels" hidden>⬇ Videos for every player</button></span></div><div class="list" id="clip-list"></div></div>
     <div class="panel"><div class="spread"><h3>Squads and shirt numbers</h3><button class="btn ghost danger sm" id="del-match">Delete match</button></div>
       <p class="muted" style="margin:0">If the shirt numbers change from game to game, type each player's number for this match, or scan the team sheet. Numbers here apply to this match only.</p>
       <div class="roster" id="squads"></div></div>`;
@@ -1474,6 +1474,7 @@ const Match={
   renderClips(m){
     const cs=S.clips.filter(c=>c.matchId===m.id).sort((x,y)=>x.start-y.start);
     $("#clip-count").textContent=cs.length?cs.length+" clips":"";
+    const ab=$("#m-allreels");if(ab){ab.hidden=!cs.some(c=>byId("players",c.playerId));ab.onclick=()=>exportAllPlayers(m)}
     const el=$("#clip-list");
     if(!cs.length){el.innerHTML=`<p class="muted">No clips tagged in this match yet.</p>`;return}
     /* edits happen right in the list: tick to pick several, the action and stars change on the spot, delete is one click with Undo */
@@ -1632,7 +1633,9 @@ function drawCard(ctx,W,H,o,kind){
     if(o.crest)ctx.drawImage(o.crest,W/2-80,70,160,160);
     ctx.fillStyle="#ffffff";fitText(ctx,o.pl.name,W-200,82,800);ctx.fillText(o.pl.name,W/2,330);
     ctx.fillStyle="#c9d3df";ctx.font="600 34px Inter, Arial, sans-serif";
-    const sub=[o.pl.number!=null&&o.pl.number!==""?"#"+o.pl.number:"",POSL[o.pl.position]||"",o.pl.birthYear?"Born "+o.pl.birthYear:"",o.pl.foot?footL(o.pl.foot)+" foot":""].filter(Boolean).join("  ·  ");
+    /* a match's video shows the number worn in that match */
+    const no=o.num!=null&&o.num!==""?o.num:o.pl.number;
+    const sub=[no!=null&&no!==""?"#"+no:"",POSL[o.pl.position]||"",o.pl.birthYear?"Born "+o.pl.birthYear:"",o.pl.foot?footL(o.pl.foot)+" foot":""].filter(Boolean).join("  ·  ");
     ctx.fillText(sub,W/2,390);
     ctx.font="600 30px Inter, Arial, sans-serif";ctx.fillStyle="#9fb0c6";
     ctx.fillText([t?.name,CN[t?.country]].filter(Boolean).join(" · "),W/2,440);
@@ -1661,27 +1664,29 @@ function drawFrame(ctx,W,H,v,o,c,i){
   if(o.brand){ctx.direction="ltr";ctx.textAlign="left";ctx.font="600 20px Inter, Arial, sans-serif";ctx.fillStyle="rgba(255,255,255,.75)";ctx.fillText(o.brand,40,52)}
 }
 let exporting=null;
-async function exportReel(pl,list){
-  if(exporting)return;
+/* batch = {i, n, label}: one of several videos made in a row (every player of a match); returns "done", "cancelled" or "failed" */
+async function exportReel(pl,list,batch=null){
+  if(exporting)return "busy";
   const mime=pickMime();
   if(!mime||!HTMLCanvasElement.prototype.captureStream){openModal(`<h2>This browser can't create videos</h2><p>Open ${BRAND} in Google Chrome or Edge on a computer and try again.</p><div class="row"><button class="btn" data-close>Close</button></div>`);return}
   const ac=new (window.AudioContext||window.webkitAudioContext)();
   const t=byId("teams",pl.teamId);
   const W=1280,H=720;
   const total=list.reduce((s,c)=>s+(c.end-c.start),0)+3+(S.settings.brand?3:1.5);
-  openModal(`<div class="spread"><h2>Creating reel: ${esc(pl.name)}</h2><span class="muted num" id="x-eta"></span></div>
+  openModal(`<div class="spread"><h2>${batch?`Video ${batch.i} of ${batch.n}: `:"Creating reel: "}${esc(pl.name)}</h2><span class="muted num" id="x-eta"></span></div>
     <canvas id="x-canvas" width="${W}" height="${H}"></canvas>
     <div class="bar"><i id="x-bar"></i></div><div class="spread"><span id="x-status" class="muted">Preparing…</span><button class="btn" id="x-cancel">Cancel</button></div>
-    <p class="muted" style="margin:0">The reel is recorded in real time (about ${Math.ceil(total/60)} min). Keep this tab open and visible until it finishes.</p>`,true);
+    <p class="muted" style="margin:0">${batch?`Each video is recorded in real time (this one about ${Math.ceil(total/60)} min), then downloads and the next one starts. If the browser asks to allow several downloads, choose Allow. Cancel stops the whole series.`:`The reel is recorded in real time (about ${Math.ceil(total/60)} min).`} Keep this tab open and visible until it finishes.</p>`,true);
   const cv=$("#x-canvas"),ctx=cv.getContext("2d");
   let cancelled=false;$("#x-cancel").onclick=()=>{cancelled=true};
+  if(batch)$("#x-cancel").textContent="Cancel all";
   exporting=true;
   /* anonymous CORS keeps frames from cloud videos drawable; files from this computer are unaffected */
   const v=document.createElement("video");v.crossOrigin="anonymous";v.playsInline=true;v.preload="auto";v.style.cssText="position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;bottom:0;left:0";document.body.appendChild(v);
   try{
     await document.fonts.ready;
     const crestImg=await loadImg(crestSrc(t));
-    const o={pl,team:t,crest:crestImg,n:list.length,brand:S.settings.brand||"",contact:S.settings.contact||""};
+    const o={pl,team:t,crest:crestImg,n:list.length,brand:S.settings.brand||"",contact:S.settings.contact||"",num:batch?.num};
     const node=ac.createMediaElementSource(v),dest=ac.createMediaStreamDestination();node.connect(dest);
     const stream=cv.captureStream(30);dest.stream.getAudioTracks().forEach(tr=>stream.addTrack(tr));
     const rec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:6000000,audioBitsPerSecond:128000});
@@ -1711,18 +1716,44 @@ async function exportReel(pl,list){
     }
     draw=null;clearInterval(loop);
     const stopped=once(rec,"stop");rec.stop();await stopped;
-    if(cancelled){closeModal();toast("Export cancelled");return}
+    if(cancelled){closeModal();toast("Export cancelled");return "cancelled"}
     const blob=new Blob(chunks,{type:mime.split(";")[0]});
     const ext=mime.startsWith("video/mp4")?"mp4":"webm";
-    const fname=`${safeName(pl.name)} - highlights.${ext}`;
+    const fname=batch?`${batch.num!=null?"#"+batch.num+" ":""}${safeName(pl.name)} - ${safeName(batch.label)}.${ext}`:`${safeName(pl.name)} - highlights.${ext}`;
     download(blob,fname);
+    if(batch)return "done";
     $("#x-bar").style.width="100%";
     $("#x-status").innerHTML=`<b>Reel ready and downloaded:</b> ${esc(fname)} (${(blob.size/1048576).toFixed(1)}MB)`+(!/avc1/.test(mime)?`<br>This browser didn't produce H.264, so the video may not open in WhatsApp or on iPhone. Up-to-date Chrome or Edge on a computer create a standard MP4.`:"");
     $("#x-cancel").textContent="Close";$("#x-cancel").onclick=closeModal;
   }catch(e){
     console.error(e);$("#x-status").textContent="Export failed. Try again, or refresh the page and reattach the files.";
     $("#x-cancel").textContent="Close";$("#x-cancel").onclick=closeModal;
+    return "failed";
   }finally{exporting=null;v.remove();try{ac.close()}catch(e){}}
+}
+/* one click on a match: every player with clips in it gets a video of their own, made one after another
+   (home side first, then by this match's shirt number, the numbers a scanned team sheet fills in) */
+async function exportAllPlayers(m){
+  if(!videoMap[m.id]){toast(m.ytId?"Video files can't be made from YouTube. Attach the original match file first":"Attach the match file first");return}
+  const by={};S.clips.filter(c=>c.matchId===m.id&&!c.excluded&&byId("players",c.playerId)).forEach(c=>(by[c.playerId]=by[c.playerId]||[]).push(c));
+  const side=p=>p.teamId===m.homeId?0:p.teamId===m.awayId?1:2,no=p=>{const n=shirtNo(p,m);return n==null||n===""?999:+n};
+  const pls=Object.keys(by).map(id=>byId("players",id)).sort((a,b)=>side(a)-side(b)||no(a)-no(b)||a.name.localeCompare(b.name));
+  if(!pls.length){toast("No clips tagged in this match yet");return}
+  const secs=pls.reduce((s,p)=>s+by[p.id].reduce((t,c)=>t+c.end-c.start,0)+(S.settings.brand?6:4.5),0);
+  openModal(`<div class="spread"><h2>Videos for every player</h2><button class="btn ghost" data-close>Close</button></div>
+    <p class="muted" style="margin:0">A separate video for each of the ${pls.length} players with clips in this match, with their name and shirt number on screen. They're made one after another and download as each one finishes. Recording runs in real time: about ${Math.ceil(secs/60)} min in all.</p>
+    <div class="list">${pls.map(p=>{const t=byId("teams",p.teamId),k=by[p.id];return `<div class="item">${kit(t,shirtNo(p,m))}<span class="grow"><b>${esc(p.name)}</b> <span class="muted">${esc(t?.name||"")}</span></span><span class="muted num">${k.length} clip${k.length>1?"s":""} · ${fmt(k.reduce((s,c)=>s+c.end-c.start,0))}</span></div>`}).join("")}</div>
+    <div class="row"><button class="btn primary big" id="ap-go">Create ${pls.length} videos</button></div>`);
+  $("#ap-go").onclick=async()=>{
+    const label=matchLabel(m);let done=0,stopped=false;const failed=[];
+    for(let i=0;i<pls.length;i++){const p=pls[i];
+      const r=await exportReel(p,by[p.id].slice().sort((a,b)=>a.start-b.start),{i:i+1,n:pls.length,label,num:shirtNo(p,m)});
+      if(r==="cancelled"){stopped=true;break}if(r==="done")done++;else failed.push(p.name)}
+    openModal(`<h2>${stopped?"Stopped: ":""}${done} of ${pls.length} videos ready</h2>
+      <p style="margin:0">${done?"They're in your Downloads folder, one file per player, named with the shirt number and the match.":"No videos were created."}</p>
+      ${failed.length?`<div class="notice">Not created: ${esc(failed.join(", "))}. Try them one at a time from each player's page.</div>`:""}
+      <div class="row"><button class="btn primary" data-close>Close</button></div>`);
+  };
 }
 
 /* ---------- squad import from an image or pasted text ---------- */
