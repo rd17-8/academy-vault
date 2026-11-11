@@ -2426,7 +2426,8 @@ async function runOCR(files){
   async function aiScan(src,label){
     if(!session||aiScanOff)return false;
     say(`${label}: reading with AI (handwriting too)…`);const b=$("#ocr-bar");if(b)b.style.width="35%";
-    const k=Math.min(1,2000/Math.max(src.width,src.height)),c=document.createElement("canvas");
+    /* ~1280 px reads best: the free model got worse on the same photo enlarged to 2000 px */
+    const k=Math.min(1,1280/Math.max(src.width,src.height)),c=document.createElement("canvas");
     c.width=Math.round(src.width*k);c.height=Math.round(src.height*k);const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);x.drawImage(src,0,0,c.width,c.height);
     let r;
     try{r=await api("/scan",{method:"POST",body:{image:c.toDataURL("image/jpeg",.88),team:imp.team.name,known:playersOf(imp.team.id).map(p=>p.name)}})}
