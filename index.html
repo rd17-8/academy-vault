@@ -144,6 +144,7 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
 a.card{text-decoration:none;color:inherit}
 a.card:hover,button.card:hover{border-color:var(--accent)}
 button.card{font:inherit;color:inherit;text-align:inherit;cursor:pointer}
+.card-acts{justify-content:flex-end;gap:6px}
 .list{display:flex;flex-direction:column}
 .item{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line);min-width:0}
 .item:first-child{border-top:0}
@@ -1032,8 +1033,25 @@ function matchCards(ms){
       <div class="spread"><span class="muted num">${esc(m.date||"No date")}</span><span class="row">${m.example?'<span class="ex">Example</span>':""}<span class="muted">${esc(m.competition||"")}</span></span></div>
       <div class="vs"><div class="side">${crest(h)}<b>${esc(h?.name||"?")}</b></div><div>${scoreHtml(m)}</div><div class="side">${crest(a)}<b>${esc(a?.name||"?")}</b></div></div>
       <div class="spread"><span class="muted">${[m.ytId?"YouTube":"",videoMap[m.id]?"File attached":m.fileName?"File: "+esc(m.fileName):""].filter(Boolean).join(" · ")||"No video yet"}</span><span><b class="num">${n}</b> <span class="muted">clips</span></span></div>
+      <div class="row card-acts"><button class="btn sm" type="button" data-medit="${esc(m.id)}">Edit</button><button class="btn ghost danger sm" type="button" data-mdel="${esc(m.id)}" title="Delete (you can undo)">Delete</button></div>
     </a>`}).join("")}</div>`;
 }
+/* edit / delete straight from a match card, without opening the match; a deleted match (and its clips) can be undone */
+function deleteMatchUndo(id){
+  const m=byId("matches",id);if(!m)return;
+  const clips=S.clips.filter(c=>c.matchId===id);
+  del("matches",id);
+  toast("Match deleted",{label:"Undo",fn:()=>{
+    if(!byId("matches",m.id))S.matches.push(m);
+    const have=new Set(S.clips.map(c=>c.id));S.clips.push(...clips.filter(c=>!have.has(c.id)));
+    save();refresh();toast("Match is back")}});
+}
+document.addEventListener("click",e=>{
+  const b=e.target.closest&&e.target.closest("#root [data-medit],#root [data-mdel]");if(!b)return;
+  e.preventDefault();e.stopPropagation();
+  if(b.dataset.medit){const m=byId("matches",b.dataset.medit);if(m)editMatch(m)}
+  else deleteMatchUndo(b.dataset.mdel);
+},true);
 
 /* ---------- view: home (countries) ---------- */
 let homeTab="af";
