@@ -2334,7 +2334,7 @@ function prepImage(file){
       res({canvas:c,url,col})};
     img.onerror=()=>{URL.revokeObjectURL(url);rej()};img.src=url});
 }
-let imp=null;
+let imp=null,aiScanOff=false;
 /* with a match, the sheet is that game's team sheet: its numbers are saved for the match only, players are found by name */
 function openImport(team,match=null){
   imp={team,rows:[],images:[],match,sheets:[]};
@@ -2413,13 +2413,45 @@ async function runOCR(files){
     return worker;
   }
   /* each match sheet keeps its own rows, filed under the match it belongs to (or into the open match) */
-  const sheetRows=[];imp.sheets=[];imp.score=null;
+  const sheetRows=[];imp.sheets=[];imp.score=null;let aiRead=0;
   /* the opponent's line-up comes along (side "opp"), kept apart from ours since both teams wear the same numbers */
   function addSheet(sh){
     const opp=(sh.oppRows||[]).map(r=>({...r,side:"opp"}));
     if(imp.match){sheetRows.push(...sh.rows,...opp);if(sh.sheet.ourScore&&!imp.score)imp.score={...sh.sheet,save:true};return}
     const k=imp.sheets.length,m=sheetMatch(imp.team,sh.sheet);
     imp.sheets.push({...sh.sheet,matchId:m?m.id:sh.sheet.opp?"new":""});sheetRows.push(...[...sh.rows,...opp].map(r=>({...r,sheet:k})));
+  }
+  /* first choice: the GEMBALL cloud reads the photo with AI (handwriting, any layout or language); on any problem the
+     built-in text recognition below takes over, so scanning never depends on it */
+  async function aiScan(src,label){
+    if(!session||aiScanOff)return false;
+    say(`${label}: reading with AI (handwriting too)…`);const b=$("#ocr-bar");if(b)b.style.width="35%";
+    const k=Math.min(1,2000/Math.max(src.width,src.height)),c=document.createElement("canvas");
+    c.width=Math.round(src.width*k);c.height=Math.round(src.height*k);const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);x.drawImage(src,0,0,c.width,c.height);
+    let r;
+    try{r=await api("/scan",{method:"POST",body:{image:c.toDataURL("image/jpeg",.88),team:imp.team.name,known:playersOf(imp.team.id).map(p=>p.name)}})}
+    catch(e){if(e.status===401)throw e;console.warn("AI reading:",e.message);return false}
+    if(b)b.style.width="100%";
+    if(r.off){aiScanOff=true;return false}
+    const ps=(r.players||[]).filter(p=>p&&String(p.name||"").trim()||p&&p.number!=null);
+    if(!ps.length)return false;
+    const row=p=>({include:true,number:Number.isInteger(p.number)?p.number:null,name:String(p.name||"").trim(),position:POS.some(([k])=>k===p.position)?p.position:"",
+      birthYear:p.birth_year>=1980&&p.birth_year<=2025?p.birth_year:null,foot:["Right","Left","Both"].includes(p.foot)?p.foot:"",check:!!p.unsure});
+    const sides=[...new Set(ps.map(p=>p.side))];
+    let ours=r.our_side;
+    if(!["home","away","only"].includes(ours)||!sides.includes(ours)){
+      const sc=s=>{const n=s==="home"?r.home_team:s==="away"?r.away_team:"";return n?teamScore(n,imp.team.name):0};
+      ours=sides.length===1?sides[0]:sides.slice().sort((a,b)=>sc(b)-sc(a)||ps.filter(p=>p.side===b).length-ps.filter(p=>p.side===a).length)[0];
+    }
+    const mine=ps.filter(p=>p.side===ours).map(row),other=ps.filter(p=>p.side!==ours).map(row);
+    const home=ours!=="away",opp=String((home?r.away_team:r.home_team)||"").trim();
+    /* a team sheet that names no opponent is just the squad (its numbers become squad numbers), unless a match is open */
+    if(r.kind==="match_sheet"&&(opp||imp.match)){
+      const hs=Number.isInteger(r.home_score)?r.home_score:null,as=Number.isInteger(r.away_score)?r.away_score:null,score=hs!=null&&as!=null?[hs,as]:null;
+      const us=imp.team.name,date=/^20\d\d-\d\d-\d\d$/.test(r.date||"")?r.date:null;
+      addSheet({sheet:{opp,date,score,ourScore:score?(home?score:[score[1],score[0]]):null,home,label:opp?(home?`${us}${score?` ${score[0]}–${score[1]} `:" vs "}${opp}`:`${opp}${score?` ${score[0]}–${score[1]} `:" vs "}${us}`):"Match sheet"},rows:mine,oppRows:other.length>=7?other:[]});
+    }else all.push(...mine);
+    aiRead++;return true;
   }
   async function ocr(canvas,label,col){
     const w=await getWorker();say(`${label}: reading text…`);
@@ -2442,7 +2474,7 @@ async function runOCR(files){
   try{
     for(let i=0;i<files.length;i++){
       const f=files[i],of=files.length>1?` (file ${i+1} of ${files.length})`:"";
-      if(!isPDF(f)){const {canvas,url,col}=await prepImage(f);imp.images.push(url);await ocr(canvas,`Image${of}`,col);continue}
+      if(!isPDF(f)){const {canvas,url,col}=await prepImage(f);imp.images.push(url);if(!await aiScan(col,`Image${of}`))await ocr(canvas,`Image${of}`,col);continue}
       say(`Opening the PDF${of}…`);
       let lib;try{lib=await loadPDF()}catch(e){why="pdf";throw e}
       let doc;try{doc=await lib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise}catch(e){why="badpdf";throw e}
@@ -2458,7 +2490,7 @@ async function runOCR(files){
           if(prof){all.push(...prof);sheets=true}else if(sh){addSheet(sh);sheets=true}else if(!sheets)all.push(...parseLayout(words,text).rows);continue}
         const c=await pdfCanvas(page,Math.min(4,2600/w1));
         const g=c.getContext("2d");g.filter="grayscale(1)";g.drawImage(c,0,0);
-        const n0=all.length;if(await ocr(c,label))sheets=true;else if(sheets)all.length=n0;
+        const n0=all.length;if(await aiScan(c,label)||await ocr(c,label))sheets=true;else if(sheets)all.length=n0;
       }
       doc.destroy();
     }
@@ -2466,7 +2498,7 @@ async function runOCR(files){
     const tw=deacc(imp.team.name).split(/[^a-z]+/).filter(w=>w.length>2);
     imp.rows=mergeRows(all).filter(r=>r.number!=null||r.position||!r.name||deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1&&tw.some(v=>lev(w,v)<=1)).length*2<deacc(r.name).split(/[^a-z]+/).filter(w=>w.length>1).length)
       .concat(sheetRows);
-    st.innerHTML=imp.rows.length?"":`<div class="notice">No players found. Try a sharper image, crop to just the list, or paste the names as text.</div>`;
+    st.innerHTML=imp.rows.length?(aiRead?`<p class="muted" style="margin:0">Read with AI. Check the names and numbers against the picture; red numbers were hard to read.</p>`:""):`<div class="notice">No players found. Try a sharper image, crop to just the list, or paste the names as text.</div>`;
     if(imp.rows.length)renderReview();
   }catch(e){console.error(e);st.innerHTML=`<div class="notice">${why==="engine"?"Couldn't load the text-recognition engine. Check your internet connection, or paste the list as text."
     :why==="pdf"?"Couldn't load the PDF reader. Check your internet connection, or send a screenshot of the list instead."
