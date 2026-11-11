@@ -649,15 +649,15 @@ const cloudModalOpen=id=>$("#modal-root .modal")?.dataset.cloud===id;
 const closeCloudModal=id=>{if(cloudModalOpen(id))closeModal()};
 function askCloud(m){
   if(!cloudCfg()){openModal(`<div class="spread"><h2>Match video from a download link</h2><button class="btn ghost" data-close>Close</button></div>
-    <p style="margin:0">To copy videos from WeTransfer or SwissTransfer straight into the platform, connect your cloud storage first: open <b>Settings</b> and paste your connection code.</p>
+    <p style="margin:0">To copy videos from WeTransfer, SwissTransfer or Veo straight into the platform, connect your cloud storage first: open <b>Settings</b> and paste your connection code.</p>
     <div class="row"><button class="btn primary" id="cl-set">Open Settings</button></div>`);$("#cl-set").onclick=()=>{closeModal();$("#nav-settings").click()};return}
   const run=cloudRuns[m.id],job=!run&&loadJobs()[m.id];
   openModal(`<div class="spread"><h2>Match video from a download link</h2><button class="btn ghost" data-close>Close</button></div>
-    <p class="muted" style="margin:0">Paste the WeTransfer or SwissTransfer link the club sent. The video is copied straight into your cloud storage, nothing downloads to this computer, and it plays from any device.</p>
+    <p class="muted" style="margin:0">Paste the WeTransfer or SwissTransfer link the club sent, or a Veo match link (the match must be set to <b>Public</b> in Veo: Share → copy link). The video is copied straight into your cloud storage, nothing downloads to this computer, and it plays from any device.</p>
     ${run?`<div class="stack" data-cloudprog="${esc(m.id)}" style="gap:6px"><span>Copying to the cloud…</span><div class="bar"><i></i></div></div>
       <p class="muted" style="margin:0">You can close this window and keep working. Keep this page open until it finishes.</p>`
     :`${job?`<div class="notice">A copy of <b>${esc(job.file)}</b> stopped at ${cloudPct(job)}%.<div class="row" style="margin-top:8px"><button class="btn primary" id="cl-resume">Resume</button><button class="btn ghost" id="cl-drop">Start over</button></div></div>`:""}
-      <label class="f">Download link<input id="cl-link" type="url" dir="ltr" placeholder="https://we.tl/…  or  https://www.swisstransfer.com/d/…" value="${esc(job?.link||"")}"></label>
+      <label class="f">Download link<input id="cl-link" type="url" dir="ltr" placeholder="https://we.tl/…  ·  swisstransfer.com/d/…  ·  app.veo.co/matches/…" value="${esc(job?.link||"")}"></label>
       <div class="row"><button class="btn" id="cl-check">Check link</button></div><div id="cl-out"></div>`}`);
   $("#modal-root .modal").dataset.cloud=m.id;
   if(run){showCloudProgress(m.id);return}
@@ -667,7 +667,7 @@ function askCloud(m){
   $("#cl-check").onclick=async()=>{const link=$("#cl-link").value.trim();if(!link){toast("Paste the link first");return}
     out.innerHTML=`<p class="muted">Reading the link…</p>`;
     try{const r=await cloudApi("/resolve",{link});
-      out.innerHTML=`<div class="item"><div class="grow"><b>${esc(r.name)}</b><div class="muted">${gb(r.size)} · from ${esc(r.service)}${r.files>1?` · the largest video of ${r.files} files`:""}</div></div></div>
+      out.innerHTML=`<div class="item"><div class="grow"><b>${esc(r.name)}</b><div class="muted">${gb(r.size)} · from ${esc(r.service)}${r.files>1&&r.service!=="Veo"?` · the largest video of ${r.files} files`:""}</div></div></div>
         ${m.cloud?`<p class="muted">This replaces the video already in the cloud for this match.</p>`:""}
         <div class="row" style="margin-top:8px"><button class="btn primary" id="cl-go">Copy to the cloud</button></div>`;
       $("#cl-go").onclick=()=>{out.innerHTML=`<p class="muted">Starting…</p>`;
@@ -2671,7 +2671,7 @@ $("#nav-settings").onclick=()=>{
     <p class="muted" style="margin:0;font-size:.85rem">Restoring adds the backup to what is already here. Nothing is deleted.</p>
     <hr style="border:0;border-top:1px solid var(--line);width:100%">
     <h3>Match videos in the cloud</h3>
-    <p class="muted" style="margin:0">Videos copied from WeTransfer or SwissTransfer links into this space. They play on every approved device without downloading.</p>
+    <p class="muted" style="margin:0">Videos copied from WeTransfer, SwissTransfer or Veo links into this space. They play on every approved device without downloading.</p>
     <div id="s-cloud-list"></div>`);
   const su=$("#s-undo");if(su)su.onclick=e=>armDelete(e.currentTarget,undoRestore);
   const cloudList=async()=>{const box=$("#s-cloud-list");if(!box||!cloudCfg())return;box.innerHTML=`<p class="muted">Checking the cloud…</p>`;
