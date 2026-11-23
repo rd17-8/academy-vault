@@ -314,6 +314,10 @@ body.view-only :is(#new-team,#clear-ex,#t-newmatch,#t-import,#del-match,#m-edit,
 .ai-flex{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
 .ai-flex>*{flex:1 1 240px}
 .ai-badge{font-size:.72rem;padding:1px 6px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+.ai-ev{font:inherit;color:var(--accent);background:none;border:0;padding:2px 4px;margin:-2px -4px;border-radius:6px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+.ai-ev:hover{background:var(--line)}.ai-ev:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#aim .item.on{outline:2px solid var(--accent);outline-offset:-2px}
+@media (max-width:700px){#aim{max-height:38vh;padding:12px;gap:10px}}
 </style>
 </head>
 <body class="locked">
@@ -1396,15 +1400,19 @@ const Match={
     const cloudBtn=sm=>cloudRuns[m.id]?`<button class="btn${sm?" ghost sm":""}" id="b-cloud" data-cloudprog="${esc(m.id)}"><span>Copying to the cloud…</span></button>`
       :`<button class="btn${sm?" ghost sm":""}" id="b-cloud">${loadJobs()[m.id]?"Resume cloud copy":sm?"Replace from a download link":"From a download link"}</button>`;
     /* the first video of this visit starts where the match was left last time */
-    const back=this._resume==null&&!this._backDone&&lastPos[m.id]?lastPos[m.id]:null;
-    const resume=this._resume??back;this._resume=null;
+    /* a moment picked on a profile or in Player search plays as soon as this match's video is ready */
+    const pend=aiPending&&aiPending.matchId===m.id?aiPending:null;aiPending=null;
+    const back=!pend&&this._resume==null&&!this._backDone&&lastPos[m.id]?lastPos[m.id]:null;
+    const resume=pend?pend.start:(this._resume??back);this._resume=null;
     if(back&&(videoMap[m.id]||m.ytId)){this._backDone=true;toast("Picking up where you left off: "+fmt(back))}
+    if(pend){this._backDone=true;if(!videoMap[m.id]&&!m.ytId)toast("Attach the match video to watch this moment")}
+    const playPend=()=>{if(pend&&this._key===key)this.preview(pend.start,pend.end)};
     if(this.src==="file"&&videoMap[m.id]){
       const cl=isCloud(videoMap[m.id]);
       /* a cloud video is read with CORS so frames can still be drawn (crest picker, reel export) */
       box.innerHTML=`<video id="vid" controls playsinline preload="auto"${cl?` crossorigin="anonymous"`:""} src="${esc(videoMap[m.id])}"></video>`;
       this.v=$("#vid");
-      this.v.addEventListener("loadedmetadata",()=>{if(resume)this.v.currentTime=resume;if(Math.abs((m.duration||0)-this.v.duration)>1){m.duration=this.v.duration;save();this.renderTimeline(m)}});
+      this.v.addEventListener("loadedmetadata",()=>{if(resume)this.v.currentTime=resume;playPend();if(Math.abs((m.duration||0)-this.v.duration)>1){m.duration=this.v.duration;save();this.renderTimeline(m)}});
       if(cl)this.v.addEventListener("error",()=>toast("The cloud video didn't load. Check your internet connection or the connection code in Settings"),{once:true});
       ctrl.innerHTML=tools(`${cl?`<span class="muted" title="Playing from your cloud storage">☁ Cloud</span>`:""}<button class="btn ghost sm" id="b-swap">${cl?"Attach a file":"Replace file"}</button>${cloudCfg()?cloudBtn(true):""}${m.ytId?"":`<button class="btn ghost sm" id="b-edityt">+ YouTube link</button>`}`);
       wireTools();return;
@@ -1418,7 +1426,7 @@ const Match={
         ctrl.innerHTML=`<button class="btn ghost sm" id="b-edityt">Change link</button>${cloudCfg()?cloudBtn(true):""}`;$("#b-pick").onclick=()=>pickVideo(m);$("#b-edityt").onclick=()=>askYT(m);const bc=$("#b-cloud");if(bc)bc.onclick=()=>askCloud(m);};
       makeYT($("#yt-slot"),m.ytId,msg=>fail(msg)).then(p=>{
         if(this._key!==key){p.destroy();return}
-        this.v=p;if(resume)p.currentTime=resume;
+        this.v=p;if(resume)p.currentTime=resume;playPend();
         const iv=setInterval(()=>{if(this._key!==key||!this.v){clearInterval(iv);return}const d=p.duration;if(d>0){clearInterval(iv);if(Math.abs((m.duration||0)-d)>1){m.duration=d;save()}this.renderTimeline(m)}},500);
         ctrl.innerHTML=tools(`<button class="btn ghost sm" id="b-ytlink">Copy link to moment</button>${videoMap[m.id]?"":`<button class="btn ghost sm" id="b-addfile">+ Original file</button>${cloudCfg()?cloudBtn(true):""}`}`);
         wireTools();
@@ -2666,7 +2674,14 @@ const Highlights={
    (playerId) and given the shirt number seen; unlinked ones still show up in the search as unnamed players */
 const AIPOS=p=>({RM:"RW",LM:"LW"}[p]||p);
 const AISTATS=[["distance90","Distance /90","km",1],["sprints90","Sprints /90","",1],["hsr90","High-speed running /90","m",0],["top","Top speed","km/h",1],
+  ["goals","Goals","",0],["shots90","Shots /90","",1],["won90","Balls won /90","",1],
   ["touches90","Touches /90","",1],["passes90","Passes /90","",1],["passpct","Pass accuracy","%",0],["minutes","Minutes","",0]];
+/* which moments stand behind a stat: clicking it plays them */
+const AISTAT_EV={sprints90:"sprint",top:"top",goals:"goal",shots90:"shot",won90:"won",touches90:"touch",passes90:"pass",passpct:"pass"};
+/* event type -> [stat name, one moment, seconds before, seconds after] */
+const AIEV={goal:["Goals","Goal",8,6],shot:["Shots","Shot",4,4],won:["Balls won","Ball won",3,4],pass:["Passes","Pass",3,3],carry:["Carries","Carry",2,6],
+  sprint:["Sprints","Sprint",2,6],top:["Top speed","Top speed",3,4],touch:["Touches","Touch",2,3]};
+const AICLIP={goal:"Goal",shot:"Shot",won:"Tackle / Interception",carry:"Dribble",sprint:"Sprint",top:"Sprint",pass:"Other",touch:"Other"};
 const aiFmt=(v,d)=>v==null||!isFinite(v)?"–":(+v).toFixed(d);
 function aiTeamId(m,code){const side=(m.analysis.sides||{})[code]||(code==="A"?"home":"away");return side==="home"?m.homeId:m.awayId}
 function heatSvg(h,w=260){
@@ -2682,8 +2697,9 @@ function aiIndex(){
       const key=p.playerId||(m.id+":"+p.id);
       const r=rows[key]||(rows[key]={key,playerId:p.playerId||null,teamId:p.playerId?byId("players",p.playerId)?.teamId:aiTeamId(m,p.team),
         number:p.number,ai:p.playerId?null:{matchId:m.id,id:p.id},matchIds:new Set(),minutes:0,dist:0,distMin:0,hsr:0,spr:0,hsrMin:0,top:0,touches:0,passes:0,comp:0,pos:{},
-        heat:Array.from({length:8},()=>Array(12).fill(0))});
-      const mins=p.minutes||0;r.matchIds.add(m.id);r.minutes+=mins;
+        goals:null,shots:0,won:0,evMin:0,refs:[],heat:Array.from({length:8},()=>Array(12).fill(0))});
+      const mins=p.minutes||0;r.matchIds.add(m.id);r.minutes+=mins;r.refs.push({m,p});
+      if(p.events){r.goals=(r.goals||0)+(p.goals||0);r.shots+=p.shots||0;r.won+=p.balls_won||0;r.evMin+=mins}
       if(p.distance_km!=null){r.dist+=p.distance_km;r.distMin+=mins}
       if(p.hsr_m_per90!=null){r.hsr+=p.hsr_m_per90*mins/90;r.spr+=(p.sprints_per90||0)*mins/90;r.hsrMin+=mins}
       r.top=Math.max(r.top,p.top_speed_kmh||0);r.touches+=p.touches||0;r.passes+=p.passes||0;r.comp+=p.passes_completed||0;
@@ -2693,12 +2709,64 @@ function aiIndex(){
   return Object.values(rows).map(r=>{const pl=r.playerId?byId("players",r.playerId):null;
     return {...r,pl,matches:r.matchIds.size,position:pl?.position||Object.entries(r.pos).sort((a,b)=>b[1]-a[1])[0]?.[0]||"",birthYear:pl?.birthYear||null,
       distance90:r.distMin>=20?r.dist/r.distMin*90:null,hsr90:r.hsrMin>=20?r.hsr/r.hsrMin*90:null,sprints90:r.hsrMin>=20?r.spr/r.hsrMin*90:null,top:r.top||null,
+      shots90:r.evMin>=20?r.shots/r.evMin*90:null,won90:r.evMin>=20?r.won/r.evMin*90:null,
       touches90:r.minutes>=20?r.touches/r.minutes*90:null,passes90:r.minutes>=20?r.passes/r.minutes*90:null,passpct:r.passes>=8?100*r.comp/r.passes:null}});
 }
 function aiName(r){
   if(r.pl)return `<a href="#/player/${esc(r.pl.id)}">${esc(r.pl.name)}</a>`;
   const m=byId("matches",r.ai.matchId);
   return `<a href="#/match/${esc(r.ai.matchId)}">Unnamed ${r.number!=null&&r.number!==""?"#"+esc(r.number):esc(POSL[r.position]||r.position||"player")}</a> <span class="ai-badge" title="${esc(matchLabel(m))}">not linked</span>`}
+/* ---------- AI moments: every counted action keeps its video time, so a stat opens the clips behind it ---------- */
+let aiPending=null,aimTimer=null;   // aiPending = a moment picked away from its match, played once that match's video is ready
+function aiMoments(type,refs){
+  const out=[];
+  for(const {m,p} of refs){const off=+(m.analysis?.offset||0);
+    for(const e of p.events||[]){
+      if(!(type==="shot"?(e[0]==="shot"||e[0]==="goal"):e[0]===type))continue;
+      const d=AIEV[e[0]],t=e[1]+off;out.push({m,p,type:e[0],t,extra:e[2],start:Math.max(0,t-d[2]),end:t+d[3]})}}
+  return out.sort((a,b)=>a.m.id===b.m.id?a.t-b.t:String(a.m.date||"").localeCompare(String(b.m.date||"")));
+}
+function aiMomentLabel(x){const d=AIEV[x.type];
+  if(x.type==="pass")return d[1]+(x.extra?" · reached a team-mate":" · lost");
+  if(x.type==="top")return d[1]+(x.extra?` · ${aiFmt(x.extra,1)} km/h`:"");
+  return d[1]}
+function aiPlayerLabel(m,p){const pl=p.playerId&&byId("players",p.playerId);return pl?pl.name:`Unnamed ${p.number!=null&&p.number!==""?"#"+p.number:POSL[AIPOS(p.position)]||"player"}`}
+function stopAIM(){clearInterval(aimTimer);aimTimer=null}
+function closeAIM(){stopAIM();const q=$("#aim");if(q)q.remove()}
+function playMoment(x){
+  if(current===Match&&Match.match()?.id===x.m.id){
+    if(!Match.v){toast("Attach the match video first, then the moments play here");return false}
+    Match.preview(x.start,x.end);
+    /* keep the video in sight: on phones the moments list is a sheet over the lower part of the screen */
+    const vb=$("#vbox"),r=vb&&vb.getBoundingClientRect(),room=innerWidth<=700?innerHeight*.62:innerHeight;
+    const top=$(".topbar")?.getBoundingClientRect().bottom||0;   // the sticky top bar covers the start of the page
+    if(r&&(r.top<top||r.bottom>room))scrollTo({top:scrollY+r.top-top-6,behavior:"smooth"});return true}
+  aiPending={matchId:x.m.id,start:x.start,end:x.end};location.hash="#/match/"+x.m.id;return true}
+function openAIM(title,list){
+  closeAIM();if(!list.length){toast("No moments of this kind were found");return}
+  const q=document.createElement("aside");q.id="aim";q.className="qv";q.setAttribute("aria-label","Moments");document.body.appendChild(q);
+  const multi=new Set(list.map(x=>x.m.id)).size>1,editable=x=>!isViewer()&&x.p.playerId;
+  q.innerHTML=`<div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div style="min-width:0"><b style="font-size:1.1rem;overflow-wrap:anywhere">${esc(title)}</b><div class="muted">${list.length} moment${list.length===1?"":"s"}${multi?` in ${new Set(list.map(x=>x.m.id)).size} matches`:""}</div></div><button class="btn ghost sm x" id="aim-x" aria-label="Close">✕ <span class="kbd">Esc</span></button></div>
+    <div class="row"><button class="btn primary sm" id="aim-all">▶ Play all</button><span class="muted" style="font-size:.85rem">Each clip starts a few seconds before the moment.</span></div>
+    <div class="list">${list.map((x,i)=>`<div class="item" data-aimi="${i}"><div class="grow"><b>${esc(aiMomentLabel(x))}</b><div class="muted num">${multi?esc(matchLabel(x.m))+" · ":""}${fmt(x.t)}</div></div><button class="btn sm" data-aimp="${i}" aria-label="Play this moment">▶</button>${editable(x)?`<button class="btn ghost sm" data-aimc="${i}" title="Keep it as a tagged clip on the player's reel">+ Clip</button>`:""}</div>`).join("")}</div>
+    <p class="muted" style="margin:0;font-size:.82rem">Found automatically by the analysis engine, so now and then a moment is off. If the video you attached starts at a different point from the analysed one, set Video sync in the AI panel of the match.</p>`;
+  const mark=i=>$$("[data-aimi]",q).forEach(el=>el.classList.toggle("on",+el.dataset.aimi===i));
+  const play=i=>{stopAIM();mark(i);return playMoment(list[i])};
+  $("#aim-x").onclick=closeAIM;
+  $$("[data-aimp]",q).forEach(b=>b.onclick=()=>play(+b.dataset.aimp));
+  $("#aim-all").onclick=()=>{
+    const first=list.findIndex(x=>current===Match&&Match.match()?.id===x.m.id);let i=first<0?0:first;
+    if(!play(i)||current!==Match)return;
+    aimTimer=setInterval(()=>{const v=Match.v,x=list[i];if(current!==Match||!v){stopAIM();return}
+      if(v.currentTime>=x.end-.15){const n=list.findIndex((y,k)=>k>i&&y.m.id===x.m.id);if(n<0){stopAIM();mark(-1);return}i=n;mark(i);Match.preview(list[i].start,list[i].end)}},200)};
+  $$("[data-aimc]",q).forEach(b=>b.onclick=()=>{const x=list[+b.dataset.aimc],pl=byId("players",x.p.playerId);if(!pl)return;
+    if(S.clips.some(c=>c.matchId===x.m.id&&c.playerId===pl.id&&Math.abs(c.start-x.start)<1)){toast("Already in the clips");return}
+    S.clips.push({id:uid(),matchId:x.m.id,playerId:pl.id,teamId:pl.teamId,start:+x.start.toFixed(1),end:+x.end.toFixed(1),action:AICLIP[x.type]||"Other",note:"AI: "+aiMomentLabel(x),rating:0});
+    save();b.disabled=true;b.textContent="✓ Clip";toast("Saved to "+pl.name+"'s clips");if(current===Match&&Match.redrawLists)Match.redrawLists()});
+}
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#aim")&&!$("#modal-root")?.innerHTML)closeAIM()});
+/* a stat backed by moments is a button: data-aiev="<event type>|<key>", resolved by the view that drew it */
+const evBtn=(type,key,text,title)=>`<button class="ai-ev" data-aiev="${esc(type)}|${esc(key)}" title="${esc(title||"Watch these moments")}">${text}</button>`;
 function renderAI(m,h,a){
   const box=$("#ai-panel");if(!box)return;const A=m.analysis;
   if(!A){
@@ -2706,18 +2774,24 @@ function renderAI(m,h,a){
       <p class="muted" style="margin:0">When the analysis engine has processed this match, import its file (match_stats.json) here. Every player gets minutes, distance, sprints, top speed, a position and a heatmap, and becomes searchable in Player search.</p>`;
   }else{
     const teamOf=c=>byId("teams",aiTeamId(m,c));
+    const ev=A.players.some(p=>Array.isArray(p.events));   // files from engine v2 keep the time of every action
+    const cell=(type,p,v,title)=>v==null||v===""?"–":(v===0||v==="0"?"0":evBtn(type,p.id,esc(String(v)),title));
     const tbl=c=>{const t=teamOf(c),squad=S.players.filter(p=>p.teamId===t?.id).sort((x,y)=>(x.number??99)-(y.number??99));
       const ps=A.players.filter(p=>p.team===c);
       return `<div><div class="spread"><b><span class="ai-dot" style="background:${esc(A.teams?.[c]?.colour||"#888")}"></span>${esc(t?.name||"Team "+c)} <span class="muted">(${esc(A.teams?.[c]?.colour||"")} shirts)</span></b><span class="muted">Possession <b class="num">${aiFmt(A.teams?.[c]?.possession_pct,0)}%</b></span></div>
-      <div class="scroll-x"><table class="ai-t"><thead><tr><th>Player</th><th>#</th><th>Position</th><th>Min</th><th>Distance</th><th>Sprints /90</th><th>Top km/h</th><th>Touches</th><th>Passes</th><th></th></tr></thead><tbody>
+      <div class="scroll-x"><table class="ai-t"><thead><tr><th>Player</th><th>#</th><th>Position</th><th>Min</th><th>Distance</th><th>${ev?"Sprints":"Sprints /90"}</th><th>Top km/h</th>${ev?"<th>Goals</th><th>Shots</th><th>Balls won</th>":""}<th>Touches</th><th>Passes</th><th></th></tr></thead><tbody>
       ${ps.map(p=>`<tr><td><select data-ailink="${esc(p.id)}" aria-label="Link to a squad player"><option value="">Unknown</option>${squad.map(s=>`<option value="${esc(s.id)}" ${s.id===p.playerId?"selected":""}>${s.number!=null?"#"+esc(s.number)+" ":""}${esc(s.name)}</option>`).join("")}</select></td>
         <td><input class="num" data-ainum="${esc(p.id)}" value="${esc(p.number??"")}" inputmode="numeric" aria-label="Shirt number"></td>
         <td>${esc(POSL[AIPOS(p.position)]||p.position)}${p.position_by_half&&new Set(Object.values(p.position_by_half).map(AIPOS)).size>1?` <span class="muted">(${Object.entries(p.position_by_half).map(([k,v])=>"H"+k+" "+esc(POSL[AIPOS(v)]||v)).join(", ")})</span>`:""}</td>
-        <td class="num">${p.minutes}</td><td class="num">${p.distance_km!=null?aiFmt(p.distance_km,1)+" km":"–"}</td><td class="num">${aiFmt(p.sprints_per90,1)}</td><td class="num">${aiFmt(p.top_speed_kmh,1)}</td>
-        <td class="num">${p.touches??"–"}</td><td class="num">${p.passes?`${p.passes_completed}/${p.passes}`:"–"}</td><td><button class="btn sm" data-aiheat="${esc(p.id)}">Heatmap</button></td></tr>`).join("")}
+        <td class="num">${p.minutes}</td><td class="num">${p.distance_km!=null?aiFmt(p.distance_km,1)+" km":"–"}</td>
+        ${ev?`<td class="num">${cell("sprint",p,p.sprints,`${aiFmt(p.sprints_per90,1)} per 90 minutes. Watch the sprints`)}</td><td class="num">${p.top_speed_kmh!=null?cell("top",p,aiFmt(p.top_speed_kmh,1),"Watch the top-speed run"):"–"}</td>
+          <td class="num">${cell("goal",p,p.goals)}</td><td class="num">${cell("shot",p,p.shots)}</td><td class="num">${cell("won",p,p.balls_won)}</td>`
+          :`<td class="num">${aiFmt(p.sprints_per90,1)}</td><td class="num">${aiFmt(p.top_speed_kmh,1)}</td>`}
+        <td class="num">${ev?cell("touch",p,p.touches):p.touches??"–"}</td><td class="num">${p.passes?(ev?cell("pass",p,`${p.passes_completed}/${p.passes}`,"Watch the passes"):`${p.passes_completed}/${p.passes}`):"–"}</td><td><button class="btn sm" data-aiheat="${esc(p.id)}">Heatmap</button></td></tr>`).join("")}
       </tbody></table></div></div>`};
     box.innerHTML=`<div class="spread"><h3>AI match analysis</h3><span class="row"><button class="btn sm ai-edit" id="ai-swap">Swap teams</button><button class="btn ghost danger sm ai-edit" id="ai-del">Remove analysis</button></span></div>
-      <p class="muted" style="margin:0 0 8px">Link each player to your squad (or type the shirt number you see) so the numbers add up on their profile and in Player search. Positions are worked out separately for each half, so the change of ends at half-time is already handled. Distance counts the whole time on the pitch; touches and passes are experimental.</p>
+      <p class="muted" style="margin:0 0 8px">Link each player to your squad (or type the shirt number you see) so the numbers add up on their profile and in Player search. Positions are worked out separately for each half, so the change of ends at half-time is already handled. Distance counts the whole time on the pitch; touches and passes are experimental.${ev?" <b>Click a number to watch the moments behind it.</b>":""}</p>
+      ${ev?`<div class="row ai-edit" style="margin:0 0 10px"><label class="row" style="gap:6px">Video sync <input type="number" step="0.5" id="ai-off" value="${esc(A.offset||0)}" style="width:90px" aria-describedby="ai-off-h"> s</label><span class="muted" id="ai-off-h" style="font-size:.85rem">Leave at 0 when the attached video is the one that was analysed. If it starts later, enter how many seconds later.</span></div>`:""}
       <div class="ai-teams">${tbl("A")}${tbl("B")}</div>`;
   }
   const f=$("#ai-file");if(f)f.onchange=async e=>{const file=e.target.files[0];if(!file)return;
@@ -2727,6 +2801,9 @@ function renderAI(m,h,a){
   const sw=$("#ai-swap");if(sw)sw.onclick=()=>{const s=A.sides||{A:"home",B:"away"};A.sides={A:s.A==="home"?"away":"home",B:s.B==="home"?"away":"home"};A.players.forEach(p=>p.playerId=null);save();refresh()};
   const dl=$("#ai-del");if(dl)dl.onclick=e=>armDelete(e.currentTarget,()=>{delete m.analysis;save();refresh()});
   $$("[data-ailink]",box).forEach(s=>{if(isViewer())s.disabled=true;s.onchange=()=>{const p=A.players.find(x=>x.id===s.dataset.ailink);p.playerId=s.value||null;const pl=p.playerId&&byId("players",p.playerId);if(pl&&pl.number!=null&&(p.number==null||p.number===""))p.number=pl.number;save();refresh()}});
+  $$("[data-aiev]",box).forEach(b=>b.onclick=()=>{const [type,id]=b.dataset.aiev.split("|"),p=A.players.find(x=>x.id===id);if(!p)return;
+    openAIM(`${aiPlayerLabel(m,p)} · ${AIEV[type][0]}`,aiMoments(type,[{m,p}]))});
+  const off=$("#ai-off");if(off){if(isViewer())off.disabled=true;off.onchange=()=>{A.offset=+off.value||0;save()}}
   $$("[data-ainum]",box).forEach(i=>{if(isViewer())i.disabled=true;i.onchange=()=>{const p=A.players.find(x=>x.id===i.dataset.ainum);const v=i.value.trim();p.number=v===""?null:+v;save()}});
   $$("[data-aiheat]",box).forEach(b=>b.onclick=()=>{const p=A.players.find(x=>x.id===b.dataset.aiheat);const pl=p.playerId&&byId("players",p.playerId);
     openModal(`<div class="panel" style="max-width:520px"><div class="spread"><h3>${pl?esc(pl.name):"Unnamed player"} · ${esc(POSL[AIPOS(p.position)]||p.position)}</h3><button class="btn sm" id="ai-x">Close</button></div>${heatSvg(p.heat,480)}<p class="muted">${p.minutes} minutes in this match. Shown attacking to the right in both halves.</p></div>`);
@@ -2737,9 +2814,13 @@ function renderPlayerAI(pl){
   if(!r){box.hidden=true;return}
   box.hidden=false;
   box.innerHTML=`<div class="spread"><h2>AI statistics</h2><span class="muted">${r.matches} analysed match${r.matches>1?"es":""} · ${r.minutes} minutes</span></div>
-    <div class="ai-flex"><div class="ai-grid">${AISTATS.filter(s=>s[0]!=="minutes").map(([k,l,u,d])=>`<div class="stat"><span class="v num">${aiFmt(r[k],d)}${r[k]!=null&&u?` <small class="muted">${u}</small>`:""}</span><span class="l">${l}</span></div>`).join("")}
+    <div class="ai-flex"><div class="ai-grid">${AISTATS.filter(s=>s[0]!=="minutes").map(([k,l,u,d])=>{const v=`${aiFmt(r[k],d)}${r[k]!=null&&u?` <small class="muted">${u}</small>`:""}`,t=AISTAT_EV[k];
+        const has=t&&r[k]!=null&&aiMoments(t,r.refs).length;
+        return `<div class="stat"><span class="v num">${has?evBtn(t,k,v,"Watch the "+AIEV[t][0].toLowerCase()):v}</span><span class="l">${l}</span></div>`}).join("")}
       <div class="stat"><span class="v">${esc(POSL[r.position]||r.position||"–")}</span><span class="l">Main position (AI)</span></div></div>
-      <div>${heatSvg(r.heat,320)}</div></div>`;
+      <div>${heatSvg(r.heat,320)}</div></div>
+      ${r.refs.some(x=>x.p.events)?`<p class="muted" style="margin:8px 0 0;font-size:.85rem">Click a number to watch the moments behind it.</p>`:""}`;
+  $$("[data-aiev]",box).forEach(b=>b.onclick=()=>{const t=b.dataset.aiev.split("|")[0];openAIM(`${pl.name} · ${AIEV[t][0]}`,aiMoments(t,r.refs))});
 }
 /* ---------- view: player search by AI statistics ---------- */
 const SEARCH_KEY="gemball-search-v1";
@@ -2783,8 +2864,11 @@ const Search={
     box.innerHTML=`<div class="spread"><h3>${rs.length} player${rs.length===1?"":"s"}</h3><span class="muted">${(f.from||f.to)?"Unnamed players have no birth year, so a birth-year filter hides them. ":""}Per-90 values need at least 20 minutes.</span></div>
       <div class="scroll-x"><table><thead><tr><th>Player</th><th>Team</th><th>Position</th><th>Age</th><th>Matches</th>${AISTATS.map(([k,l,u])=>`<th${k===f.sort?' style="color:var(--accent)"':""}>${l}${u?` <span class="muted">${u}</span>`:""}</th>`).join("")}</tr></thead><tbody>
       ${rs.slice(0,300).map(r=>{const t=byId("teams",r.teamId);return `<tr><td>${aiName(r)}</td><td><span class="row">${flag(t?.country,"sm")}${esc(t?.name||"")}</span></td><td>${esc(POSL[r.position]||r.position||"")}</td>
-        <td class="num">${r.birthYear?yr-r.birthYear:"–"}</td><td class="num">${r.matches}</td>${AISTATS.map(([k,,,d])=>`<td class="num">${aiFmt(r[k],d)}</td>`).join("")}</tr>`}).join("")||`<tr><td colspan="13" class="muted">No players match these filters.</td></tr>`}
+        <td class="num">${r.birthYear?yr-r.birthYear:"–"}</td><td class="num">${r.matches}</td>${AISTATS.map(([k,,,d])=>{const t=AISTAT_EV[k];return `<td class="num">${t&&r[k]&&r.refs.some(x=>x.p.events)?evBtn(t,r.key,aiFmt(r[k],d)):aiFmt(r[k],d)}</td>`}).join("")}</tr>`}).join("")||`<tr><td colspan="16" class="muted">No players match these filters.</td></tr>`}
       </tbody></table></div>`;
+    this.rows=rs;
+    $$("[data-aiev]",box).forEach(b=>b.onclick=()=>{const [t,key]=b.dataset.aiev.split("|"),r=this.rows.find(x=>x.key===key);if(!r)return;
+      openAIM(`${r.pl?r.pl.name:aiPlayerLabel(null,r.refs[0].p)} · ${AIEV[t][0]}`,aiMoments(t,r.refs))});
   }
 };
 const VIEWS={home:Home,country:Country,team:Team,match:Match,player:Player,highlights:Highlights,search:Search};
