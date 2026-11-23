@@ -53,7 +53,7 @@ img{max-width:100%}
 .results a{display:flex;gap:10px;align-items:center;padding:8px 12px;color:inherit;text-decoration:none}
 .results a:hover,.results a:focus{background:var(--sunk)}
 .results .h{font-size:.75rem;color:var(--muted);padding:8px 12px 2px;letter-spacing:.04em}
-.navlinks{display:flex;gap:4px;margin-inline-start:auto}
+.navlinks{display:flex;gap:4px;margin-inline-start:auto;flex-wrap:wrap;align-items:center;min-width:0}
 .navlinks a,.navlinks button{color:var(--bar-muted);text-decoration:none;font:inherit;font-weight:600;padding:6px 10px;border-radius:6px;background:none;border:0;cursor:pointer;white-space:nowrap}
 .navlinks a[aria-current="page"],.navlinks a:hover,.navlinks button:hover{color:var(--bar-ink);background:rgba(255,255,255,.08)}
 .crumbs{background:var(--surface);border-bottom:1px solid var(--line)}
@@ -297,6 +297,23 @@ body.locked>*:not(#gate):not(#toast):not(#modal-root){display:none!important}
 .invite pre{margin:0;white-space:pre-wrap;font:inherit;font-size:.9rem}
 .sync{font-size:.78rem;color:var(--muted);align-self:center}
 .sync[data-s="error"]{color:var(--danger)}
+/* a view-only account (a partner looking at the owner's data): the controls that change data are hidden */
+body.view-only :is(#new-team,#clear-ex,#t-newmatch,#t-import,#del-match,#m-edit,#b-edityt,#b-addfile,#tg-del,#cl-delsel,#imp-add,
+  [data-medit],[data-mdel],[data-delp],[data-crestfor],[data-sheet],[data-edit],[data-del],[data-rdel],[data-cdel],label[for="s-import"],
+  #t-crest,#t-tabs [data-k="edit"],#pf,.panel.sub:has(#t-import),.ai-edit){display:none!important}
+/* AI match analysis */
+.ai-teams{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+.ai-teams>div{min-width:0}
+.ai-teams .spread{flex-wrap:wrap;gap:4px 12px}
+.ai-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-inline-end:6px;vertical-align:middle;border:1px solid var(--line)}
+.ai-t td,.ai-t th{white-space:nowrap}
+.ai-t select,.ai-t input{max-width:150px}
+.ai-t input.num{width:56px}
+.ai-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.ai-grid .stat{background:var(--panel2,rgba(255,255,255,.04));border-radius:10px;padding:8px 10px}
+.ai-flex{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.ai-flex>*{flex:1 1 240px}
+.ai-badge{font-size:.72rem;padding:1px 6px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
 </style>
 </head>
 <body class="locked">
@@ -308,6 +325,7 @@ body.locked>*:not(#gate):not(#toast):not(#modal-root){display:none!important}
   <nav class="navlinks">
     <a href="#/" id="nav-home">Countries</a>
     <a href="#/highlights" id="nav-hl">Highlights</a>
+    <a href="#/search" id="nav-search">Player search</a>
     <span class="sync" id="sync"></span>
     <button type="button" id="nav-admin" hidden>Accounts<span class="nbadge" id="nav-admin-n" hidden></span></button>
     <button type="button" id="nav-settings">Settings</button>
@@ -438,10 +456,17 @@ const API=(location.hostname==="localhost"&&localStorage.getItem("gemball-api"))
 let session=null;try{session=JSON.parse(localStorage.getItem(SESSION_KEY)||"null")}catch(e){}
 let WS=null,wsName="",dataVer=null,saveTimer=null,saving=false,dirty=false;
 const isAdmin=()=>session?.user?.role==="admin";
+/* an account the owner gave view-only access to the owner's data (the server refuses its changes) */
+const isViewer=()=>!isAdmin()&&session?.user?.access==="main";
 /* the space that is open: the owner's own ("main"), a client's that the owner opened, or the client's own */
-const curWS=()=>WS||(isAdmin()?"main":session?.user?.username||"");
-function syncState(s){const el=$("#sync");if(el){el.dataset.s=s;el.textContent=s==="error"?"Not saved yet, retrying…":s==="saving"?"Saving…":"Saved"}}
-function save(){if(!session)return;dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(flush,600);syncState("saving")}
+const curWS=()=>WS||(isAdmin()||isViewer()?"main":session?.user?.username||"");
+function syncState(s){const el=$("#sync");if(!el)return;if(isViewer()){el.dataset.s="view";el.textContent="View only";return}
+  el.dataset.s=s;el.textContent=s==="error"?"Not saved yet, retrying…":s==="saving"?"Saving…":"Saved"}
+/* a view-only account never saves: a change made on screen is put back from the server a moment later */
+let viewRevert=null;
+function save(){if(!session)return;
+  if(isViewer()){clearTimeout(viewRevert);viewRevert=setTimeout(async()=>{toast("View only: changes aren't saved");try{await loadData();linkCloud();refresh(true)}catch(e){}},500);return}
+  dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(flush,600);syncState("saving")}
 async function flush(){
   clearTimeout(saveTimer);if(saving||!dirty||!session)return;
   saving=true;dirty=false;let retry=600;
@@ -752,6 +777,8 @@ function refresh(full){
   if(route.view==="home"||route.view==="country")$("#nav-home").setAttribute("aria-current","page");
   $("#nav-hl").toggleAttribute("aria-current",route.view==="highlights");
   if(route.view==="highlights")$("#nav-hl").setAttribute("aria-current","page");
+  $("#nav-search").toggleAttribute("aria-current",route.view==="search");
+  if(route.view==="search")$("#nav-search").setAttribute("aria-current","page");
 }
 function crumbs(items){
   $("#crumbs").innerHTML=[`<a href="#/">Countries</a>`,...items.map(([label,href])=>href?`<a href="${href}">${label}</a>`:`<b>${label}</b>`)].join(`<span class="sep">›</span>`);
@@ -1080,6 +1107,7 @@ const Home={
         const pc=S.players.filter(p=>ids.has(p.teamId)).length,mc=S.matches.filter(m=>ids.has(m.homeId)||ids.has(m.awayId)).length;
         return `<a class="mycountry" href="#/country/${c[0]}"><span class="wash" style="background-image:url(${flagSrc(c[0])})"></span>${flag(c[0])}<span style="min-width:0;position:relative"><b>${esc(c[1])}</b>
           <span class="mini"><span><b>${ts.length}</b> academies</span><span><b>${pc}</b> players</span><span><b>${mc}</b> matches</span></span></span></a>`}).join("")}</div>`
+      :isViewer()?`<div class="panel"><h3>No academies here yet</h3><p class="muted" style="margin:0">Academies the GEMBALL team adds will show up here.</p></div>`
       :`<div class="panel"><h3>No academies in this space yet</h3><p class="muted" style="margin:0">Everything you add is saved in your private space and opens on every device you're approved on. Have a backup file? Load it with <b>Settings → Restore backup</b>. Starting fresh? Pick a country below or click "New academy".</p></div>`;
     const tabs=CONTINENTS;
     if(!tabs.some(([k])=>k===homeTab))homeTab="af";
@@ -1090,7 +1118,7 @@ const Home={
       return `<a class="country" href="#/country/${c[0]}">${n?`<span class="badge">${n}</span>`:""}${flag(c[0])}<span>${esc(c[1])}${n?`<small>${n} academies</small>`:""}</span></a>`}).join("")}</div>`;
     const ms=[...S.matches].sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,6);
     $("#m-count").textContent=S.matches.length?S.matches.length+" matches in the vault":"";
-    $("#recent").innerHTML=matchCards(ms)||`<p class="muted">No matches yet. Open an academy and click "New match".</p>`;
+    $("#recent").innerHTML=matchCards(ms)||`<p class="muted">${isViewer()?"No matches yet.":`No matches yet. Open an academy and click "New match".`}</p>`;
     const hasEx=[S.teams,S.matches,S.clips,S.players].some(a=>a.some(x=>x.example));
     $("#ex-slot").innerHTML=hasEx?`<div class="notice spread"><span>The vault contains example data (marked "Example"). Delete it once you have had a look.</span><button class="btn sm" id="clear-ex">Delete example data</button></div>`:"";
     const ce=$("#clear-ex");if(ce)ce.onclick=()=>armDelete(ce,clearExamples);
@@ -1114,7 +1142,7 @@ const Country={
     $("#c-teams").innerHTML=ts.length?`<div class="grid">${ts.map(t=>{const ms=matchesOf(t.id).length;
       return `<a class="panel card" href="#/team/${esc(t.id)}"><div class="row">${crest(t,"lg")}<div style="flex:1;min-width:0"><h3>${esc(t.name)}</h3><div class="muted">${esc([t.city,t.ageGroup].filter(Boolean).join(" · "))}</div>${t.example?'<span class="ex">Example</span>':""}${awaitTag(t)}</div></div>
         <div class="stats"><div class="stat"><span class="v num">${playersOf(t.id).length}</span><span class="l">Players</span></div><div class="stat"><span class="v num">${ms}</span><span class="l">Matches</span></div><div class="stat"><span class="v num">${S.clips.filter(c=>c.teamId===t.id).length}</span><span class="l">Clips</span></div></div></a>`}).join("")}</div>`
-      :`<div class="panel"><h3>No academies in ${esc(CN[code]||"")}</h3><p class="muted">Add the academies you work with here: name, kit colours and crest. Then add the squads and matches they send you.</p></div>`;
+      :`<div class="panel"><h3>No academies in ${esc(CN[code]||"")}</h3><p class="muted">${isViewer()?"None yet.":"Add the academies you work with here: name, kit colours and crest. Then add the squads and matches they send you."}</p></div>`;
     const ids=new Set(ts.map(t=>t.id));
     const ms=S.matches.filter(m=>ids.has(m.homeId)||ids.has(m.awayId)).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
     $("#c-matches").innerHTML=matchCards(ms)||`<p class="muted">No matches yet.</p>`;
@@ -1264,6 +1292,7 @@ const Match={
       </div>
       <div class="panel" id="tagpanel"></div>
     </div>
+    <div class="panel" id="ai-panel"></div>
     <div class="panel"><div class="spread"><h3>Tagged clips</h3><span class="row"><span class="muted" id="clip-count"></span><button class="btn primary sm" id="m-allreels" hidden>⬇ Videos for every player</button></span></div><div class="list" id="clip-list"></div></div>
     <div class="panel"><div class="spread"><h3>Squads and shirt numbers</h3><button class="btn ghost danger sm" id="del-match">Delete match</button></div>
       <p class="muted" style="margin:0">If the shirt numbers change from game to game, type each player's number for this match, or scan the team sheet. Numbers here apply to this match only.</p>
@@ -1327,6 +1356,7 @@ const Match={
     this.renderTagPanel(m,h,a);
     this.renderClips(m);
     this.renderSquads(m,h,a);
+    renderAI(m,h,a);
     if(qvId)openQV(qvId);
   },
   renderSquads(m,h,a){
@@ -1555,7 +1585,7 @@ function reelList(pl){
   return cs.sort((a,b)=>pos(a.id)-pos(b.id)||String(byId("matches",a.matchId)?.date).localeCompare(String(byId("matches",b.matchId)?.date))||a.start-b.start);
 }
 const Player={
-  mount(root){root.innerHTML=`<div id="p-head"></div><div class="panel" id="p-reel"></div>`},
+  mount(root){root.innerHTML=`<div id="p-head"></div><div class="panel" id="p-ai" hidden></div><div class="panel" id="p-reel"></div>`},
   unmount(){stopReel();backTo=null},
   update(){
     const pl=byId("players",route.id);
@@ -1572,6 +1602,7 @@ const Player={
       ${pl.scoutNote?`<p style="margin:4px 0 0;white-space:pre-wrap">${esc(pl.scoutNote)}</p>`:""}</div>
       <div class="stats"><div class="stat"><span class="v num">${cs.length}</span><span class="l">Clips</span></div><div class="stat"><span class="v num">${new Set(cs.map(c=>c.matchId)).size}</span><span class="l">Matches</span></div><div class="stat"><span class="v num">${fmt(dur)}</span><span class="l">Reel length</span></div></div></div>
       ${cs.length?`<div class="row">${Object.entries(byAct).map(([k,v])=>`<span class="chip static">${esc(k)} <b class="num">${v}</b></span>`).join("")}</div>`:""}</div>`;
+    renderPlayerAI(pl);
     if(reel&&reel.pid===pl.id)return;
     const box=$("#p-reel");
     if(!cs.length){box.innerHTML=`<h2>Highlight reel</h2><p class="muted">No clips for this player yet. Open one of their matches, mark the start and end of a good action and assign it to them.</p>`;return}
@@ -2630,7 +2661,133 @@ const Highlights={
     </tbody></table></div>`:`<p class="muted">No tagged clips yet. Open a match and tag players' actions.</p>`;
   }
 };
-const VIEWS={home:Home,country:Country,team:Team,match:Match,player:Player,highlights:Highlights};
+/* ---------- AI match analysis: per-player statistics from the analysis engine (match_stats.json) ---------- */
+/* m.analysis = the engine's file + sides {A:"home"|"away"}; each analysis player can be linked to a squad player
+   (playerId) and given the shirt number seen; unlinked ones still show up in the search as unnamed players */
+const AIPOS=p=>({RM:"RW",LM:"LW"}[p]||p);
+const AISTATS=[["distance90","Distance /90","km",1],["sprints90","Sprints /90","",1],["hsr90","High-speed running /90","m",0],["top","Top speed","km/h",1],
+  ["touches90","Touches /90","",1],["passes90","Passes /90","",1],["passpct","Pass accuracy","%",0],["minutes","Minutes","",0]];
+const aiFmt=(v,d)=>v==null||!isFinite(v)?"–":(+v).toFixed(d);
+function aiTeamId(m,code){const side=(m.analysis.sides||{})[code]||(code==="A"?"home":"away");return side==="home"?m.homeId:m.awayId}
+function heatSvg(h,w=260){
+  const mx=Math.max(1,...h.flat());let g="";
+  h.forEach((row,y)=>row.forEach((v,x)=>{const a=v/mx;if(a>.03)g+=`<rect x="${x*20}" y="${y*20}" width="20" height="20" fill="rgb(255,${Math.round(210-170*a)},40)" fill-opacity="${(.18+.75*a).toFixed(2)}"/>`}));
+  return `<svg viewBox="0 0 240 160" width="${w}" style="max-width:100%;height:auto;background:#1f5a2c;border-radius:8px;display:block" role="img" aria-label="Heatmap, attacking to the right">${g}
+    <g fill="none" stroke="rgba(255,255,255,.75)" stroke-width="1"><rect x=".5" y=".5" width="239" height="159"/><line x1="120" y1="0" x2="120" y2="160"/><circle cx="120" cy="80" r="14"/><rect x=".5" y="42" width="37" height="76"/><rect x="202.5" y="42" width="37" height="76"/></g>
+    <text x="234" y="153" fill="#fff" font-size="9" text-anchor="end" font-family="system-ui">attacking →</text></svg>`}
+function aiIndex(){
+  const rows={};
+  for(const m of S.matches){const A=m.analysis;if(!A||!A.players)continue;
+    for(const p of A.players){
+      const key=p.playerId||(m.id+":"+p.id);
+      const r=rows[key]||(rows[key]={key,playerId:p.playerId||null,teamId:p.playerId?byId("players",p.playerId)?.teamId:aiTeamId(m,p.team),
+        number:p.number,ai:p.playerId?null:{matchId:m.id,id:p.id},matchIds:new Set(),minutes:0,dist:0,distMin:0,hsr:0,spr:0,hsrMin:0,top:0,touches:0,passes:0,comp:0,pos:{},
+        heat:Array.from({length:8},()=>Array(12).fill(0))});
+      const mins=p.minutes||0;r.matchIds.add(m.id);r.minutes+=mins;
+      if(p.distance_km!=null){r.dist+=p.distance_km;r.distMin+=mins}
+      if(p.hsr_m_per90!=null){r.hsr+=p.hsr_m_per90*mins/90;r.spr+=(p.sprints_per90||0)*mins/90;r.hsrMin+=mins}
+      r.top=Math.max(r.top,p.top_speed_kmh||0);r.touches+=p.touches||0;r.passes+=p.passes||0;r.comp+=p.passes_completed||0;
+      const ps=AIPOS(p.position);r.pos[ps]=(r.pos[ps]||0)+mins;
+      (p.heat||[]).forEach((row,y)=>row.forEach((v,x)=>{if(r.heat[y])r.heat[y][x]+=v*mins}));
+    }}
+  return Object.values(rows).map(r=>{const pl=r.playerId?byId("players",r.playerId):null;
+    return {...r,pl,matches:r.matchIds.size,position:pl?.position||Object.entries(r.pos).sort((a,b)=>b[1]-a[1])[0]?.[0]||"",birthYear:pl?.birthYear||null,
+      distance90:r.distMin>=20?r.dist/r.distMin*90:null,hsr90:r.hsrMin>=20?r.hsr/r.hsrMin*90:null,sprints90:r.hsrMin>=20?r.spr/r.hsrMin*90:null,top:r.top||null,
+      touches90:r.minutes>=20?r.touches/r.minutes*90:null,passes90:r.minutes>=20?r.passes/r.minutes*90:null,passpct:r.passes>=8?100*r.comp/r.passes:null}});
+}
+function aiName(r){
+  if(r.pl)return `<a href="#/player/${esc(r.pl.id)}">${esc(r.pl.name)}</a>`;
+  const m=byId("matches",r.ai.matchId);
+  return `<a href="#/match/${esc(r.ai.matchId)}">Unnamed ${r.number!=null&&r.number!==""?"#"+esc(r.number):esc(POSL[r.position]||r.position||"player")}</a> <span class="ai-badge" title="${esc(matchLabel(m))}">not linked</span>`}
+function renderAI(m,h,a){
+  const box=$("#ai-panel");if(!box)return;const A=m.analysis;
+  if(!A){
+    box.innerHTML=`<div class="spread"><h3>AI match analysis</h3><label class="btn sm ai-edit">Import analysis file<input type="file" id="ai-file" accept=".json,application/json" hidden></label></div>
+      <p class="muted" style="margin:0">When the analysis engine has processed this match, import its file (match_stats.json) here. Every player gets minutes, distance, sprints, top speed, a position and a heatmap, and becomes searchable in Player search.</p>`;
+  }else{
+    const teamOf=c=>byId("teams",aiTeamId(m,c));
+    const tbl=c=>{const t=teamOf(c),squad=S.players.filter(p=>p.teamId===t?.id).sort((x,y)=>(x.number??99)-(y.number??99));
+      const ps=A.players.filter(p=>p.team===c);
+      return `<div><div class="spread"><b><span class="ai-dot" style="background:${esc(A.teams?.[c]?.colour||"#888")}"></span>${esc(t?.name||"Team "+c)} <span class="muted">(${esc(A.teams?.[c]?.colour||"")} shirts)</span></b><span class="muted">Possession <b class="num">${aiFmt(A.teams?.[c]?.possession_pct,0)}%</b></span></div>
+      <div class="scroll-x"><table class="ai-t"><thead><tr><th>Player</th><th>#</th><th>Position</th><th>Min</th><th>Distance</th><th>Sprints /90</th><th>Top km/h</th><th>Touches</th><th>Passes</th><th></th></tr></thead><tbody>
+      ${ps.map(p=>`<tr><td><select data-ailink="${esc(p.id)}" aria-label="Link to a squad player"><option value="">Unknown</option>${squad.map(s=>`<option value="${esc(s.id)}" ${s.id===p.playerId?"selected":""}>${s.number!=null?"#"+esc(s.number)+" ":""}${esc(s.name)}</option>`).join("")}</select></td>
+        <td><input class="num" data-ainum="${esc(p.id)}" value="${esc(p.number??"")}" inputmode="numeric" aria-label="Shirt number"></td>
+        <td>${esc(POSL[AIPOS(p.position)]||p.position)}${p.position_by_half&&new Set(Object.values(p.position_by_half).map(AIPOS)).size>1?` <span class="muted">(${Object.entries(p.position_by_half).map(([k,v])=>"H"+k+" "+esc(POSL[AIPOS(v)]||v)).join(", ")})</span>`:""}</td>
+        <td class="num">${p.minutes}</td><td class="num">${p.distance_km!=null?aiFmt(p.distance_km,1)+" km":"–"}</td><td class="num">${aiFmt(p.sprints_per90,1)}</td><td class="num">${aiFmt(p.top_speed_kmh,1)}</td>
+        <td class="num">${p.touches??"–"}</td><td class="num">${p.passes?`${p.passes_completed}/${p.passes}`:"–"}</td><td><button class="btn sm" data-aiheat="${esc(p.id)}">Heatmap</button></td></tr>`).join("")}
+      </tbody></table></div></div>`};
+    box.innerHTML=`<div class="spread"><h3>AI match analysis</h3><span class="row"><button class="btn sm ai-edit" id="ai-swap">Swap teams</button><button class="btn ghost danger sm ai-edit" id="ai-del">Remove analysis</button></span></div>
+      <p class="muted" style="margin:0 0 8px">Link each player to your squad (or type the shirt number you see) so the numbers add up on their profile and in Player search. Positions are worked out separately for each half, so the change of ends at half-time is already handled. Distance counts the whole time on the pitch; touches and passes are experimental.</p>
+      <div class="ai-teams">${tbl("A")}${tbl("B")}</div>`;
+  }
+  const f=$("#ai-file");if(f)f.onchange=async e=>{const file=e.target.files[0];if(!file)return;
+    try{const j=JSON.parse(await file.text());if(!Array.isArray(j.players)||!j.players.length)throw new Error("no players");
+      upd("matches",m.id,{analysis:{...j,sides:{A:"home",B:"away"},importedAt:Date.now()}});toast(`Analysis imported: ${j.players.length} players`)}
+    catch(err){toast("That file isn't a GEMBALL analysis file")}};
+  const sw=$("#ai-swap");if(sw)sw.onclick=()=>{const s=A.sides||{A:"home",B:"away"};A.sides={A:s.A==="home"?"away":"home",B:s.B==="home"?"away":"home"};A.players.forEach(p=>p.playerId=null);save();refresh()};
+  const dl=$("#ai-del");if(dl)dl.onclick=e=>armDelete(e.currentTarget,()=>{delete m.analysis;save();refresh()});
+  $$("[data-ailink]",box).forEach(s=>{if(isViewer())s.disabled=true;s.onchange=()=>{const p=A.players.find(x=>x.id===s.dataset.ailink);p.playerId=s.value||null;const pl=p.playerId&&byId("players",p.playerId);if(pl&&pl.number!=null&&(p.number==null||p.number===""))p.number=pl.number;save();refresh()}});
+  $$("[data-ainum]",box).forEach(i=>{if(isViewer())i.disabled=true;i.onchange=()=>{const p=A.players.find(x=>x.id===i.dataset.ainum);const v=i.value.trim();p.number=v===""?null:+v;save()}});
+  $$("[data-aiheat]",box).forEach(b=>b.onclick=()=>{const p=A.players.find(x=>x.id===b.dataset.aiheat);const pl=p.playerId&&byId("players",p.playerId);
+    openModal(`<div class="panel" style="max-width:520px"><div class="spread"><h3>${pl?esc(pl.name):"Unnamed player"} · ${esc(POSL[AIPOS(p.position)]||p.position)}</h3><button class="btn sm" id="ai-x">Close</button></div>${heatSvg(p.heat,480)}<p class="muted">${p.minutes} minutes in this match. Shown attacking to the right in both halves.</p></div>`);
+    $("#ai-x").onclick=closeModal});
+}
+function renderPlayerAI(pl){
+  const box=$("#p-ai");if(!box)return;const r=aiIndex().find(x=>x.playerId===pl.id);
+  if(!r){box.hidden=true;return}
+  box.hidden=false;
+  box.innerHTML=`<div class="spread"><h2>AI statistics</h2><span class="muted">${r.matches} analysed match${r.matches>1?"es":""} · ${r.minutes} minutes</span></div>
+    <div class="ai-flex"><div class="ai-grid">${AISTATS.filter(s=>s[0]!=="minutes").map(([k,l,u,d])=>`<div class="stat"><span class="v num">${aiFmt(r[k],d)}${r[k]!=null&&u?` <small class="muted">${u}</small>`:""}</span><span class="l">${l}</span></div>`).join("")}
+      <div class="stat"><span class="v">${esc(POSL[r.position]||r.position||"–")}</span><span class="l">Main position (AI)</span></div></div>
+      <div>${heatSvg(r.heat,320)}</div></div>`;
+}
+/* ---------- view: player search by AI statistics ---------- */
+const SEARCH_KEY="gemball-search-v1";
+const Search={
+  f:null,
+  mount(root){
+    crumbs([["Player search",null]]);
+    try{this.f=JSON.parse(localStorage.getItem(SEARCH_KEY)||"null")}catch(e){}
+    this.f=Object.assign({pos:"",from:"",to:"",country:"",minMin:"30",sort:"distance90",min:"",linked:""},this.f||{});
+    const f=this.f,countries=[...new Set(S.teams.map(t=>t.country).filter(Boolean))].sort((a,b)=>(CN[a]||a).localeCompare(CN[b]||b,"en"));
+    root.innerHTML=`<div><div class="eyebrow">AI statistics from every analysed match</div><h1>Player search</h1></div>
+      <div class="panel"><div class="formgrid" id="s-f">
+        <label class="f">Position<select id="s-pos"><option value="">Any</option><option value="DEF">Defenders</option><option value="MID">Midfielders</option><option value="ATT">Attackers</option>${POS.map(([k,l])=>`<option value="${k}">${l}</option>`).join("")}</select></label>
+        <label class="f">Born from<input id="s-from" type="number" min="1990" max="2025" placeholder="Year"></label>
+        <label class="f">Born up to<input id="s-to" type="number" min="1990" max="2025" placeholder="Year"></label>
+        <label class="f">Country<select id="s-country"><option value="">Any</option>${countries.map(c=>`<option value="${esc(c)}">${esc(CN[c]||c)}</option>`).join("")}</select></label>
+        <label class="f">Minutes at least<input id="s-minMin" type="number" min="0" step="10"></label>
+        <label class="f">Sort by<select id="s-sort">${AISTATS.map(([k,l])=>`<option value="${k}">${l}</option>`).join("")}</select></label>
+        <label class="f">…at least<input id="s-min" type="number" step="any" placeholder="Any"></label>
+        <label class="f">Players<select id="s-linked"><option value="">All</option><option value="1">Squad players only</option><option value="0">Unnamed only</option></select></label>
+      </div></div><div class="panel" id="s-res"></div>`;
+    const ids={pos:"s-pos",from:"s-from",to:"s-to",country:"s-country",minMin:"s-minMin",sort:"s-sort",min:"s-min",linked:"s-linked"};
+    for(const [k,id] of Object.entries(ids)){const el=$("#"+id);el.value=f[k];el.oninput=el.onchange=()=>{f[k]=el.value;try{localStorage.setItem(SEARCH_KEY,JSON.stringify(f))}catch(e){}this.update()}}
+  },
+  update(){
+    const f=this.f,box=$("#s-res");if(!box)return;
+    const G={DEF:["RB","CB","LB"],MID:["DM","CM","AM"],ATT:["RW","LW","ST"]};
+    const all=aiIndex();
+    if(!all.length){box.innerHTML=`<p class="muted">No analysed matches yet. Open a match and import its AI analysis file; the players then show up here.</p>`;return}
+    let rs=all.filter(r=>{
+      if(f.pos&&!(G[f.pos]?G[f.pos].includes(r.position):r.position===f.pos))return false;
+      if((f.from||f.to)&&!r.birthYear)return false;
+      if(f.from&&r.birthYear<+f.from)return false;if(f.to&&r.birthYear>+f.to)return false;
+      if(f.country&&byId("teams",r.teamId)?.country!==f.country)return false;
+      if(f.minMin&&r.minutes<+f.minMin)return false;
+      if(f.linked==="1"&&!r.pl)return false;if(f.linked==="0"&&r.pl)return false;
+      if(f.min!==""&&!(r[f.sort]!=null&&r[f.sort]>=+f.min))return false;
+      return true});
+    rs.sort((x,y)=>(y[f.sort]??-1)-(x[f.sort]??-1));
+    const yr=new Date().getFullYear();
+    box.innerHTML=`<div class="spread"><h3>${rs.length} player${rs.length===1?"":"s"}</h3><span class="muted">${(f.from||f.to)?"Unnamed players have no birth year, so a birth-year filter hides them. ":""}Per-90 values need at least 20 minutes.</span></div>
+      <div class="scroll-x"><table><thead><tr><th>Player</th><th>Team</th><th>Position</th><th>Age</th><th>Matches</th>${AISTATS.map(([k,l,u])=>`<th${k===f.sort?' style="color:var(--accent)"':""}>${l}${u?` <span class="muted">${u}</span>`:""}</th>`).join("")}</tr></thead><tbody>
+      ${rs.slice(0,300).map(r=>{const t=byId("teams",r.teamId);return `<tr><td>${aiName(r)}</td><td><span class="row">${flag(t?.country,"sm")}${esc(t?.name||"")}</span></td><td>${esc(POSL[r.position]||r.position||"")}</td>
+        <td class="num">${r.birthYear?yr-r.birthYear:"–"}</td><td class="num">${r.matches}</td>${AISTATS.map(([k,,,d])=>`<td class="num">${aiFmt(r[k],d)}</td>`).join("")}</tr>`}).join("")||`<tr><td colspan="13" class="muted">No players match these filters.</td></tr>`}
+      </tbody></table></div>`;
+  }
+};
+const VIEWS={home:Home,country:Country,team:Team,match:Match,player:Player,highlights:Highlights,search:Search};
 
 /* ---------- search ---------- */
 const q=$("#q"),qr=$("#q-results");
@@ -2654,6 +2811,12 @@ function openModal(html,locked){
 }
 function closeModal(){if(exporting)return;$("#modal-root").innerHTML=""}
 $("#nav-settings").onclick=()=>{
+  /* a view-only account gets only its account section: no signature to change, no backup to export or restore */
+  if(isViewer()){openModal(`<div class="spread"><h2>Settings</h2><button class="btn ghost" data-close>Close</button></div>
+    <h3>Your account</h3>
+    <p class="muted" style="margin:0">Signed in as <b>${esc(session?.user?.name||"")}</b> (${esc(session?.user?.username||"")}), viewing the GEMBALL database. View only.</p>
+    <div class="row"><button class="btn ghost danger" id="s-out">Sign out of this device</button></div>`);
+    $("#s-out").onclick=e=>armDelete(e.currentTarget,async()=>{await settled();signOut()});return}
   openModal(`<div class="spread"><h2>Settings</h2><button class="btn ghost" data-close>Close</button></div>
     <h3>Your signature on reels</h3>
     <p class="muted" style="margin:0">Shown in the corner of every highlight reel and on the closing card, so a club receiving the video knows who sent it.</p>
@@ -2804,13 +2967,13 @@ async function enter(){
   const me=await api("/auth/me");
   session.user={...session.user,...me};
   try{localStorage.setItem(SESSION_KEY,JSON.stringify(session))}catch(e){}
-  WS=null;wsName="";
+  WS=null;wsName="";document.body.classList.toggle("view-only",isViewer());
   await loadData();englishize();moveLocalData();linkCloud();
   unlock();refresh(true);wsBar();adminNav();syncState("saved");
 }
 function signOut(reason){
   clearTimeout(saveTimer);
-  session=null;WS=null;wsName="";dataVer=null;dirty=false;
+  session=null;WS=null;wsName="";dataVer=null;dirty=false;clearTimeout(viewRevert);document.body.classList.remove("view-only");
   try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(UNDO_KEY)}catch(e){}
   S.teams=[];S.players=[];S.matches=[];S.clips=[];S.settings={brand:"",contact:""};
   Object.keys(videoMap).forEach(k=>delete videoMap[k]);
@@ -2828,6 +2991,7 @@ async function start(){
 /* ---------- the owner: clients' spaces, accounts, devices, requests from the website ---------- */
 function wsBar(){
   const b=$("#ws-bar");
+  if(isViewer()){b.hidden=false;b.innerHTML=`<div class="wrap"><span>You're viewing the <b>GEMBALL database</b>. View only: nothing you do here is saved.</span></div>`;return}
   if(!WS){b.hidden=true;b.innerHTML="";return}
   b.hidden=false;
   b.innerHTML=`<div class="wrap"><span>You're in <b>${esc(wsName||WS)}</b>'s space</span><button class="btn sm" id="ws-back">Back to my space</button></div>`;
@@ -2875,7 +3039,7 @@ async function openAdmin(){
 /* the activity log: who signed in or opened GEMBALL, when, on which device and from where; refused attempts stand out */
 const EVT={login:"Signed in",open:"Opened GEMBALL","new-device":"New device asked for approval","wrong-password":"Wrong password","unknown-user":"Tried an unknown username",
   locked:"Locked out after too many wrong passwords","disabled-try":"Tried a switched-off account","revoked-try":"Tried a switched-off device",setup:"Created the owner account",
-  "create-user":"Account created","reset-password":"New password set",disable:"Account switched off",enable:"Account switched on",approve:"Device approved",revoke:"Device switched off",remove:"Device removed"};
+  "create-user":"Account created","reset-password":"New password set","view-main":"Given view access to your database","own-space":"Back to their own space",disable:"Account switched off",enable:"Account switched on",approve:"Device approved",revoke:"Device switched off",remove:"Device removed"};
 const EVT_BAD=new Set(["wrong-password","unknown-user","locked","disabled-try","revoked-try"]);
 let regionNames=null;try{regionNames=new Intl.DisplayNames(["en"],{type:"region"})}catch(e){}
 const countryName=c=>{try{return c&&regionNames?regionNames.of(c):c||""}catch(e){return c||""}};
@@ -2919,8 +3083,8 @@ async function drawAdmin(note,fromReq){
         <label class="f">Password<span class="row" style="gap:6px;flex-wrap:nowrap"><input id="a-pass" dir="ltr" autocomplete="off" style="flex:1;min-width:0"><button class="btn sm" type="button" id="a-gen">Generate</button></span></label></div>
       <div class="row"><button class="btn primary" id="a-create">Create account</button></div><div id="a-out"></div></section>
     <section class="adm-sec"><h3>Accounts</h3>
-      ${U.map(u=>`<div class="acct${u.disabled?" off":""}"><div class="spread" style="flex-wrap:wrap;gap:8px"><div><b>${esc(u.name)}</b> <span class="muted">${esc(u.username)}</span>${u.role==="admin"?`<span class="chip-s ok">owner</span>`:""}${u.disabled?`<span class="chip-s">switched off</span>`:""}</div>
-        <div class="row" style="gap:6px">${u.role!=="admin"?`<button class="btn sm" data-open="${esc(u.username)}" data-name="${esc(u.name)}">Open their space</button>`:""}<button class="btn sm ghost" data-pw="${esc(u.username)}" data-name="${esc(u.name)}">New password</button>${u.username!==me&&u.role!=="admin"?`<button class="btn sm ghost${u.disabled?"":" danger"}" data-off="${esc(u.username)}" data-v="${u.disabled?0:1}">${u.disabled?"Switch on":"Switch off account"}</button>`:""}</div></div>
+      ${U.map(u=>`<div class="acct${u.disabled?" off":""}"><div class="spread" style="flex-wrap:wrap;gap:8px"><div><b>${esc(u.name)}</b> <span class="muted">${esc(u.username)}</span>${u.role==="admin"?`<span class="chip-s ok">owner</span>`:""}${u.access==="main"?`<span class="chip-s ok">views your database</span>`:""}${u.disabled?`<span class="chip-s">switched off</span>`:""}</div>
+        <div class="row" style="gap:6px">${u.role!=="admin"&&u.access!=="main"?`<button class="btn sm" data-open="${esc(u.username)}" data-name="${esc(u.name)}">Open their space</button>`:""}${u.role!=="admin"?`<button class="btn sm ghost" data-access="${esc(u.username)}" data-v="${u.access==="main"?"own":"main"}" title="${u.access==="main"?"They go back to their own space":"They see your teams, players, matches and videos, and can't change anything"}">${u.access==="main"?"Stop viewing my database":"Let them view my database"}</button>`:""}<button class="btn sm ghost" data-pw="${esc(u.username)}" data-name="${esc(u.name)}">New password</button>${u.username!==me&&u.role!=="admin"?`<button class="btn sm ghost${u.disabled?"":" danger"}" data-off="${esc(u.username)}" data-v="${u.disabled?0:1}">${u.disabled?"Switch on":"Switch off account"}</button>`:""}</div></div>
         <div class="list">${u.devices.length?u.devices.map(d=>devRow(u,d)).join(""):`<p class="muted small" style="margin:6px 0 0">No device yet. Their first sign-in will wait here for your approval.</p>`}</div></div>`).join("")}</section>
     <section class="adm-sec"><h3>Requests from the website${reqs.requests.length?`<span class="nbadge">${reqs.requests.length}</span>`:""}</h3>
       ${reqs.requests.length?`<div class="list">${reqs.requests.map(r=>`<div class="item"><div class="grow"><b>${esc(r.name)}</b> · ${esc(r.org)} <span class="muted">(${esc(r.country)}${r.role?", "+esc(r.role):""})</span>
@@ -2934,6 +3098,9 @@ async function drawAdmin(note,fromReq){
   $$("[data-dev]",box).forEach(b=>{const run=async()=>{if(await call("/admin/device",{username:b.dataset.u,id:b.dataset.id,action:b.dataset.dev})){toast(b.dataset.dev==="approve"?"Device approved":b.dataset.dev==="revoke"?"Device switched off":"Device removed");again()}};
     b.onclick=b.dataset.dev==="approve"?run:()=>armDelete(b,run)});
   $$("[data-open]",box).forEach(b=>b.onclick=()=>openSpace(b.dataset.open,b.dataset.name));
+  $$("[data-access]",box).forEach(b=>{const run=async()=>{if(await call("/admin/user-access",{username:b.dataset.access,access:b.dataset.v})){
+      toast(b.dataset.v==="main"?"They can now view your database (view only). They see it the next time they open GEMBALL":"They're back in their own space");again()}};
+    b.onclick=b.dataset.v==="main"?()=>armDelete(b,run):run});
   $$("[data-off]",box).forEach(b=>{const run=async()=>{if(await call("/admin/user-state",{username:b.dataset.off,disabled:b.dataset.v==="1"})){toast(b.dataset.v==="1"?"Account switched off":"Account switched on");again()}};
     b.onclick=b.dataset.v==="1"?()=>armDelete(b,run):run});
   $$("[data-pw]",box).forEach(b=>b.onclick=()=>armDelete(b,async()=>{const pw=genPass();
